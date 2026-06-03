@@ -1,4 +1,4 @@
-打开vosk语音模型
+进入.\Jarvis2.0\vosk-server\websocket目录打开vosk语音模型
 VOSK_SAMPLE_RATE=16000 python3 asr_server.py ./vosk-model-cn-0.22
 
 开启tts服务
