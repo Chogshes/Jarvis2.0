@@ -46,6 +46,7 @@ SET(SOURCES screens/ui_loginScreen.c
     images/ui_img_line_png.c
     images/ui_img_line1_png.c
     images/ui_img_mp4_png.c
-    ui_temporary_image.c)
+    images/ui_temporary_image.c
+    fonts/cjk_font_20.c)
 
 add_library(ui ${SOURCES})

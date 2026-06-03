@@ -4,103 +4,305 @@
 // Project name: SquareLine_Project
 
 #include "ui.h"
+#include "music.h"
+#include "video.h"
+#include "pipeline.h"
+#include "deepseek.h"
+#include "asr.h"
+#include "tts.h"
 
 void send_cmd_fun(lv_event_t * e)
 {
-	// Your code here
+	//Your code here
+	if (lv_event_get_code(e) != LV_EVENT_CLICKED) 
+	{
+		return;
+	}
+    const char *text = lv_textarea_get_text(ui_speakText);
+    if (!text || strlen(text) == 0) 
+	{
+		return;
+	}
+    lv_textarea_add_text(ui_ansText, "You: "); 
+	lv_textarea_add_text(ui_ansText, text);
+    lv_textarea_add_text(ui_ansText, "\n");
+    lv_textarea_set_text(ui_speakText, "");
+    lv_textarea_set_placeholder_text(ui_speakText, "Thinking...");
+    if (g_pipeline_timer) 
+	{ 
+		lv_timer_del(g_pipeline_timer); 
+		g_pipeline_timer = NULL; 
+	}
+    if (g_control_timer) 
+	{ 
+		lv_timer_del(g_control_timer);  
+		g_control_timer  = NULL; 
+	}
+    g_has_intent = 0;
+    g_step = 1; g_tick = 0;
+    strncpy(g_asr_text, text, sizeof(g_asr_text) - 1);
+    deepseek_send_request_async(text, on_deepseek_result);
+    g_pipeline_timer = lv_timer_create(process_pipeline, 200, NULL);
 }
 
+// 切换家庭温度计对应锁状态
+static bool is_nest_on = false;
 void toggle_btn_nest(lv_event_t * e)
 {
 	// Your code here
+	lv_obj_t * btn = lv_event_get_target(e);
+
+    if (is_nest_on) {
+        // 当前是开 → 切换到关图片
+        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_opennest_png, NULL);
+        is_nest_on = false;
+    } else {
+        // 当前是关 → 切换到开图片
+        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_closenest_png, NULL);
+        is_nest_on = true;
+    }
+	
 }
 
-void toggle_arc_switch(lv_event_t * e)
+// 切换Arc对应锁状态
+static bool is_arc_on = false; 
+void toggle_arc_switch(lv_event_t * e)	
 {
 	// Your code here
+	lv_obj_t * btn = lv_event_get_target(e);
+    
+    if (is_arc_on) 
+	{
+        // 关：切换图片，禁用 Arc
+        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_openice_png, NULL);
+        lv_obj_add_flag(ui_iceArc, LV_OBJ_FLAG_CLICKABLE);
+        is_arc_on = false;
+    } else 
+	{
+        // 开：切换图片，启用 Arc
+        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_closeice_png, NULL);
+        lv_obj_clear_flag(ui_iceArc, LV_OBJ_FLAG_CLICKABLE);
+        is_arc_on = true;
+    }
 }
 
+// 切换空气净化器对应锁状态
+static bool is_air_on = false;
 void toggle_btn_air(lv_event_t * e)
 {
 	// Your code here
+	lv_obj_t * btn = lv_event_get_target(e);
+    if (is_air_on) 
+	{
+        // 当前是开 → 切换到关图片
+        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_openclean_png, NULL);
+        is_air_on = false;
+    } else 
+	{
+        // 当前是关 → 切换到开图片
+        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_closeclean_png, NULL);
+        is_air_on = true;
+    }
 }
 
+// 切换灯滑动对应锁状态
+static bool is_slider_on1 = false; 
+static bool is_slider_on2 = false; 
+static bool is_slider_on3 = false; 
 void toggle_slider_lock1(lv_event_t * e)
 {
 	// Your code here
+	lv_obj_t * btn = lv_event_get_target(e);
+    
+    if (is_slider_on1) 
+	{
+        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_openlig_png, NULL);
+        lv_obj_add_flag(ui_Slider7, LV_OBJ_FLAG_CLICKABLE);
+        is_slider_on1 = false;
+    } else 
+	{
+        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_closelig_png, NULL);
+        lv_obj_clear_flag(ui_Slider7, LV_OBJ_FLAG_CLICKABLE);
+        is_slider_on1 = true;
+    }
 }
 
 void toggle_slider_lock2(lv_event_t * e)
 {
 	// Your code here
+	lv_obj_t * btn = lv_event_get_target(e);
+    
+    if (is_slider_on2) 
+	{
+        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_openlig_png, NULL);
+        lv_obj_add_flag(ui_Slider2, LV_OBJ_FLAG_CLICKABLE);
+        is_slider_on2 = false;
+    } else 
+	{
+        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_closelig_png, NULL);
+        lv_obj_clear_flag(ui_Slider2, LV_OBJ_FLAG_CLICKABLE);
+        is_slider_on2 = true;
+    }
 }
 
 void toggle_slider_lock3(lv_event_t * e)
 {
 	// Your code here
+	lv_obj_t * btn = lv_event_get_target(e);
+    
+    if (is_slider_on3) 
+	{
+        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_openlig_png, NULL);
+        lv_obj_add_flag(ui_Slider5, LV_OBJ_FLAG_CLICKABLE);
+        is_slider_on3 = false;
+    } else 
+	{
+        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_closelig_png, NULL);
+        lv_obj_clear_flag(ui_Slider5, LV_OBJ_FLAG_CLICKABLE);
+        is_slider_on3 = true;
+    }
 }
 
+// 切换冰箱对应锁状态
+static bool is_reg_on = false;
 void toggle_btn_reg(lv_event_t * e)
 {
 	// Your code here
+	lv_obj_t * btn = lv_event_get_target(e);
+    if (is_reg_on) {
+        // 当前是开 → 切换到关图片
+        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_openreg_png, NULL);
+        is_reg_on = false;
+    } else {
+        // 当前是关 → 切换到开图片
+        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_closereg_png, NULL);
+        is_reg_on = true;
+    }
 }
 
+// 切换洗衣机对应锁状态
+static bool is_wash_on = false;
 void toggle_btn_wash(lv_event_t * e)
 {
 	// Your code here
+	lv_obj_t * btn = lv_event_get_target(e);
+    if (is_air_on) {
+        // 当前是开 → 切换到关图片
+        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_openclean_png, NULL);
+        is_air_on = false;
+    } else {
+        // 当前是关 → 切换到开图片
+        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_closeclean_png, NULL);
+        is_air_on = true;
+    }
 }
 
+// 切换窗帘对应锁状态
+static bool is_cur_on = false;
 void toggle_btn_cur(lv_event_t * e)
 {
 	// Your code here
+	lv_obj_t * btn = lv_event_get_target(e);
+    if (is_cur_on) {
+        // 当前是开 → 切换到关图片
+        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_opencur_png, NULL);
+        is_cur_on = false;
+    } else {
+        // 当前是关 → 切换到开图片
+        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_closecur_png, NULL);
+        is_cur_on = true;
+    }
 }
 
+//播放和暂停音乐
 void start_sto_fun(lv_event_t * e)
 {
-	// Your code here
+	music_on_play_pause_btn(e);
 }
 
+//切换下一首音乐
 void next_music_fun(lv_event_t * e)
 {
-	// Your code here
+	music_on_next_btn(e);
 }
 
+//切换上一首音乐
 void last_music_fun(lv_event_t * e)
 {
-	// Your code here
+	music_on_prev_btn(e);
 }
 
+//调整音乐音量
 void volume_control_musice(lv_event_t * e)
 {
-	// Your code here
+	music_on_volume_slider(e);
 }
 
+//调整音乐播放时间
 void sound_time_fun(lv_event_t * e)
 {
-	// Your code here
+	music_on_time_slider(e);
 }
 
+//播放和暂停视频
 void start_stop_video_fun(lv_event_t * e)
 {
-	// Your code here
+	video_on_play_pause_btn(e);
 }
 
+//切换下一集视频
 void next_video_fun(lv_event_t * e)
 {
-	// Your code here
+	video_on_next_btn(e);
 }
 
+//切换上一集视频
 void last_video_fun(lv_event_t * e)
 {
-	// Your code here
+	video_on_prev_btn(e);
 }
 
+//调整视频音量
 void volume_control_video(lv_event_t * e)
 {
-	// Your code here
+	video_on_volume_slider(e);
 }
 
+//调整视频播放时间
 void video_time_fun(lv_event_t * e)
 {
-	// Your code here
+	video_on_time_slider(e);
+}
+
+// 语音按钮
+void speak_fun(lv_event_t * e)
+{
+	if (lv_event_get_code(e) != LV_EVENT_CLICKED) 
+	{
+		return;
+	}
+    if (asr_is_listening()) 
+	{
+        asr_stop_and_cleanup();
+        lv_textarea_set_text(ui_speakText, "");
+        lv_textarea_set_placeholder_text(ui_speakText, "Type or speak a command...");
+    } else 
+	{
+        if (g_pipeline_timer) 
+		{ 
+			lv_timer_del(g_pipeline_timer); 
+			g_pipeline_timer = NULL; 
+		}
+        if (g_control_timer)  
+		{ 
+			lv_timer_del(g_control_timer);  
+			g_control_timer  = NULL; 
+		}
+        g_has_intent = 0;
+        g_asr_text[0] = '\0'; g_ai_reply[0] = '\0';
+        g_step = 0; g_tick = 0;
+        asr_start_listening(on_asr_result);
+        lv_textarea_set_placeholder_text(ui_speakText, "Listening...");
+        g_pipeline_timer = lv_timer_create(process_pipeline, 200, NULL);
+    }
 }
