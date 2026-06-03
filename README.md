@@ -1,0 +1,5 @@
+打开vosk语音模型
+VOSK_SAMPLE_RATE=16000 python3 asr_server.py ./vosk-model-cn-0.22
+
+开启tts服务
+python3 tts_server.py
