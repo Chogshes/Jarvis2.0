@@ -21,7 +21,7 @@ void toggle_slider_lock3(lv_event_t * e);
 void toggle_btn_reg(lv_event_t * e);
 void toggle_btn_wash(lv_event_t * e);
 void toggle_btn_cur(lv_event_t * e);
-void start_sto_fun(lv_event_t * e);
+void start_stop_fun(lv_event_t * e);
 void next_music_fun(lv_event_t * e);
 void last_music_fun(lv_event_t * e);
 void volume_control_musice(lv_event_t * e);

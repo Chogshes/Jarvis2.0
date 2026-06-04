@@ -211,7 +211,7 @@ void toggle_btn_cur(lv_event_t * e)
 }
 
 //播放和暂停音乐
-void start_sto_fun(lv_event_t * e)
+void start_stop_fun(lv_event_t * e)
 {
 	music_on_play_pause_btn(e);
 }

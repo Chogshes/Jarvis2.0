@@ -611,7 +611,7 @@ void ui_event_stopButt(lv_event_t * e)
     lv_event_code_t event_code = lv_event_get_code(e);
     lv_obj_t * target = lv_event_get_target(e);
     if(event_code == LV_EVENT_CLICKED) {
-        start_sto_fun(e);
+        start_stop_fun(e);
     }
 }
 void ui_event_nextButt(lv_event_t * e)
@@ -649,7 +649,10 @@ void ui_event_videoContain2(lv_event_t * e)
 }
 void ui_event_timeSlider3(lv_event_t * e)
 {
-    sound_time_fun(e);
+    lv_event_code_t event_code = lv_event_get_code(e);
+    if(event_code == LV_EVENT_VALUE_CHANGED || event_code == LV_EVENT_RELEASED) {
+        sound_time_fun(e);
+    }
 }
 void ui_event_mainFunBut3(lv_event_t * e)
 {
@@ -742,7 +745,10 @@ void ui_event_videoContain(lv_event_t * e)
 }
 void ui_event_timeSlider(lv_event_t * e)
 {
-    video_time_fun(e);
+    lv_event_code_t event_code = lv_event_get_code(e);
+    if(event_code == LV_EVENT_VALUE_CHANGED || event_code == LV_EVENT_RELEASED) {
+        video_time_fun(e);
+    }
 }
 
 ///////////////////// SCREENS ////////////////////

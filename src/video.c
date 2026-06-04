@@ -38,6 +38,12 @@ static int            g_audio_rate  = 44100;
 
 static int ring_available(void) { return (g_ring_w - g_ring_r) & RING_MASK; }
 
+static void ring_clear(void)
+{
+    g_ring_w = 0;
+    g_ring_r = 0;
+}
+
 static void ring_push(const short *data, int n)
 {
     for (int i = 0; i < n; i++) {
@@ -118,6 +124,7 @@ static volatile int g_low_volume = 100;
 static volatile double g_current_time = 0;
 static volatile double g_duration     = 0;
 static volatile double g_seek_target  = -1;
+static volatile int    g_seek_in_progress = 0;
 
 static volatile int g_width  = 0;
 static volatile int g_height = 0;
@@ -126,6 +133,35 @@ static volatile int g_frame_ready = 0;
 static pthread_t       g_thread;
 static pthread_mutex_t g_mutex = PTHREAD_MUTEX_INITIALIZER;
 static uint8_t        *g_frame = NULL;
+
+static double take_seek_target(void)
+{
+    double target;
+    pthread_mutex_lock(&g_mutex);
+    target = g_seek_target;
+    if (target >= 0) {
+        g_seek_target = -1;
+        g_seek_in_progress = 1;
+    }
+    pthread_mutex_unlock(&g_mutex);
+    return target;
+}
+
+static void finish_seek(void)
+{
+    pthread_mutex_lock(&g_mutex);
+    g_seek_in_progress = 0;
+    pthread_mutex_unlock(&g_mutex);
+}
+
+static int seek_is_busy(void)
+{
+    int busy;
+    pthread_mutex_lock(&g_mutex);
+    busy = g_seek_in_progress || g_seek_target >= 0;
+    pthread_mutex_unlock(&g_mutex);
+    return busy;
+}
 
 static void on_audio(plm_t *pl, plm_samples_t *s, void *user)
 {
@@ -152,8 +188,8 @@ static void on_video(plm_t *pl, plm_frame_t *f, void *user)
     pthread_mutex_lock(&g_mutex);
     plm_frame_to_rgba(f, g_frame, g_width * 4);
     g_frame_ready = 1;
-    pthread_mutex_unlock(&g_mutex);
     g_current_time = f->time;
+    pthread_mutex_unlock(&g_mutex);
 }
 
 static void *th(void *arg)
@@ -178,23 +214,29 @@ static void *th(void *arg)
 
     audio_thread_start();
 
-    double t = 0;
     int seek_skip = 0;
     while (g_playing && !g_stop) {
-        while (g_paused && g_playing) usleep(100000);
-
-        if (g_seek_target >= 0) {
-            plm_seek(pl, g_seek_target, 1);
-            t = g_seek_target;
-            g_current_time = g_seek_target;
-            g_seek_target = -1;
+        double target = take_seek_target();
+        if (target >= 0) {
+            ring_clear();
+            plm_seek(pl, target, 0);
+            ring_clear();
+            pthread_mutex_lock(&g_mutex);
+            if (g_seek_target < 0) g_current_time = target;
+            pthread_mutex_unlock(&g_mutex);
+            finish_seek();
             seek_skip = 2;
             continue;
         }
+
+        if (g_paused) {
+            usleep(100000);
+            continue;
+        }
+
         if (seek_skip > 0) { seek_skip--; continue; }
 
-        t += 0.03;
-        plm_decode(pl, t);
+        plm_decode(pl, 0.03);
         if (plm_has_ended(pl)) break;
     }
 
@@ -216,7 +258,9 @@ void video_play(const char *path)
     g_paused       = 0;
     g_stop         = 0;
     g_seek_target  = -1;
+    g_seek_in_progress = 0;
     g_current_time = 0;
+    ring_clear();
     g_alive        = 1;
     pthread_create(&g_thread, NULL, th, copy);
 }
@@ -235,9 +279,29 @@ void video_pause(void)                   { g_paused = 1; }
 void video_resume(void)                  { g_paused = 0; }
 int  video_is_playing(void)              { return g_playing && !g_paused; }
 int  video_is_paused(void)               { return g_paused; }
-double video_get_time(void)              { return g_current_time; }
-double video_get_duration(void)          { return g_duration; }
-void video_seek(double seconds)          { g_seek_target = seconds; }
+double video_get_time(void)
+{
+    double t;
+    pthread_mutex_lock(&g_mutex);
+    t = g_current_time;
+    pthread_mutex_unlock(&g_mutex);
+    return t;
+}
+double video_get_duration(void)
+{
+    double d;
+    pthread_mutex_lock(&g_mutex);
+    d = g_duration;
+    pthread_mutex_unlock(&g_mutex);
+    return d;
+}
+void video_seek(double seconds)
+{
+    pthread_mutex_lock(&g_mutex);
+    g_seek_target = seconds;
+    g_current_time = seconds;
+    pthread_mutex_unlock(&g_mutex);
+}
 
 void video_set_volume(int pct)
 {
@@ -271,20 +335,28 @@ static int          g_canvas_w     = 0;
 static int          g_canvas_h     = 0;
 static lv_timer_t  *g_vtimer        = NULL;
 static int          g_vdragging      = 0;
+static int          g_panel2_hide_cnt = 0;
 
 static void video_timer_cb(lv_timer_t *t)
 {
     (void)t;
-    // 全程摘掉 slider 事件回调，timer 更新滑块时不会触发 VALUE_CHANGED 到 handler
-    if (ui_timeSlider) lv_obj_remove_event_cb(ui_timeSlider, ui_event_timeSlider);
+    if (!video_is_playing() && !video_is_paused()) return;
+    if (!ui_videoContain) return;
 
-    if (!video_is_playing() && !video_is_paused()) goto done;
-    if (!ui_videoContain) goto done;
+    // Panel2 自动隐藏：3 秒无操作后消失
+    if (ui_Panel2 && !lv_obj_has_flag(ui_Panel2, LV_OBJ_FLAG_HIDDEN)) {
+        if (++g_panel2_hide_cnt > 100) {  // 100 × 30ms = 3s
+            lv_obj_add_flag(ui_Panel2, LV_OBJ_FLAG_HIDDEN);
+            g_panel2_hide_cnt = 0;
+        }
+    } else {
+        g_panel2_hide_cnt = 0;
+    }
 
     // 不在视频页面就自动暂停
     if (lv_scr_act() != lv_obj_get_screen(ui_videoContain)) {
         if (video_is_playing()) video_pause();
-        goto done;
+        return;
     }
 
     // 取出帧 → 渲染到 LVGL canvas
@@ -327,9 +399,6 @@ static void video_timer_cb(lv_timer_t *t)
         snprintf(b, sizeof(b), "%d:%02d", dur / 60, dur % 60);
         lv_label_set_text(ui_sumtimeLabel, b);
     }
-
-done:
-    if (ui_timeSlider) lv_obj_add_event_cb(ui_timeSlider, ui_event_timeSlider, LV_EVENT_ALL, NULL);
 }
 
 // ── 初始化 ──────────────────────────────────────────────

@@ -313,11 +313,12 @@ void ui_videoScreen_screen_init(void)
     lv_obj_set_x(ui_Panel2, 62);
     lv_obj_set_y(ui_Panel2, -84);
     lv_obj_set_align(ui_Panel2, LV_ALIGN_BOTTOM_LEFT);
+    lv_obj_add_flag(ui_Panel2, LV_OBJ_FLAG_HIDDEN);     /// Flags
     lv_obj_clear_flag(ui_Panel2, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
     lv_obj_set_style_bg_color(ui_Panel2, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(ui_Panel2, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_color(ui_Panel2, lv_color_hex(0x080B19), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_opa(ui_Panel2, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_opa(ui_Panel2, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     ui_timeSlider = lv_slider_create(ui_Panel2);
     lv_slider_set_value(ui_timeSlider, 0, LV_ANIM_OFF);

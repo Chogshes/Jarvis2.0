@@ -338,9 +338,6 @@ void music_on_time_slider(lv_event_t *e)
     lv_event_code_t code = lv_event_get_code(e);
 
     if (code == LV_EVENT_VALUE_CHANGED) {
-        int cur_pct = audio_get_duration_ms() > 0 ?
-            audio_get_time_ms() * 100 / audio_get_duration_ms() : 0;
-        if (abs(pct - cur_pct) <= 2 && g_slider_dragging == 0) return;
         g_slider_dragging = 1;
         char buf[16];
         fmt_time(target, buf, sizeof(buf));
