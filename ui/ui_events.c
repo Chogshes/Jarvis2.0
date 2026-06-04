@@ -53,12 +53,10 @@ void toggle_btn_nest(lv_event_t * e)
 	lv_obj_t * btn = lv_event_get_target(e);
 
     if (is_nest_on) {
-        // 当前是开 → 切换到关图片
-        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_opennest_png, NULL);
+        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_closenest_png, NULL);
         is_nest_on = false;
     } else {
-        // 当前是关 → 切换到开图片
-        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_closenest_png, NULL);
+        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_opennest_png, NULL);
         is_nest_on = true;
     }
 	
@@ -74,14 +72,14 @@ void toggle_arc_switch(lv_event_t * e)
     if (is_arc_on) 
 	{
         // 关：切换图片，禁用 Arc
-        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_openice_png, NULL);
-        lv_obj_add_flag(ui_iceArc, LV_OBJ_FLAG_CLICKABLE);
+        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_closeice_png, NULL);
+        lv_obj_clear_flag(ui_iceArc, LV_OBJ_FLAG_CLICKABLE);
         is_arc_on = false;
     } else 
 	{
         // 开：切换图片，启用 Arc
-        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_closeice_png, NULL);
-        lv_obj_clear_flag(ui_iceArc, LV_OBJ_FLAG_CLICKABLE);
+        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_openice_png, NULL);
+        lv_obj_add_flag(ui_iceArc, LV_OBJ_FLAG_CLICKABLE);
         is_arc_on = true;
     }
 }
@@ -95,12 +93,12 @@ void toggle_btn_air(lv_event_t * e)
     if (is_air_on) 
 	{
         // 当前是开 → 切换到关图片
-        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_openclean_png, NULL);
+        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_closeclean_png, NULL);
         is_air_on = false;
     } else 
 	{
         // 当前是关 → 切换到开图片
-        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_closeclean_png, NULL);
+        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_openclean_png, NULL);
         is_air_on = true;
     }
 }
@@ -116,13 +114,13 @@ void toggle_slider_lock1(lv_event_t * e)
     
     if (is_slider_on1) 
 	{
-        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_openlig_png, NULL);
-        lv_obj_add_flag(ui_Slider7, LV_OBJ_FLAG_CLICKABLE);
+        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_closelig_png, NULL);
+        lv_obj_clear_flag(ui_Slider7, LV_OBJ_FLAG_CLICKABLE);
         is_slider_on1 = false;
     } else 
 	{
-        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_closelig_png, NULL);
-        lv_obj_clear_flag(ui_Slider7, LV_OBJ_FLAG_CLICKABLE);
+        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_openlig_png, NULL);
+        lv_obj_add_flag(ui_Slider7, LV_OBJ_FLAG_CLICKABLE);
         is_slider_on1 = true;
     }
 }
@@ -134,13 +132,13 @@ void toggle_slider_lock2(lv_event_t * e)
     
     if (is_slider_on2) 
 	{
-        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_openlig_png, NULL);
-        lv_obj_add_flag(ui_Slider2, LV_OBJ_FLAG_CLICKABLE);
+        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_closelig_png, NULL);
+        lv_obj_clear_flag(ui_Slider2, LV_OBJ_FLAG_CLICKABLE);
         is_slider_on2 = false;
     } else 
 	{
-        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_closelig_png, NULL);
-        lv_obj_clear_flag(ui_Slider2, LV_OBJ_FLAG_CLICKABLE);
+        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_openlig_png, NULL);
+        lv_obj_add_flag(ui_Slider2, LV_OBJ_FLAG_CLICKABLE);
         is_slider_on2 = true;
     }
 }
@@ -152,13 +150,13 @@ void toggle_slider_lock3(lv_event_t * e)
     
     if (is_slider_on3) 
 	{
-        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_openlig_png, NULL);
-        lv_obj_add_flag(ui_Slider5, LV_OBJ_FLAG_CLICKABLE);
+        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_closelig_png, NULL);
+        lv_obj_clear_flag(ui_Slider5, LV_OBJ_FLAG_CLICKABLE);
         is_slider_on3 = false;
     } else 
 	{
-        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_closelig_png, NULL);
-        lv_obj_clear_flag(ui_Slider5, LV_OBJ_FLAG_CLICKABLE);
+        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_openlig_png, NULL);
+        lv_obj_add_flag(ui_Slider5, LV_OBJ_FLAG_CLICKABLE);
         is_slider_on3 = true;
     }
 }
@@ -171,11 +169,11 @@ void toggle_btn_reg(lv_event_t * e)
 	lv_obj_t * btn = lv_event_get_target(e);
     if (is_reg_on) {
         // 当前是开 → 切换到关图片
-        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_openreg_png, NULL);
+        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_closereg_png, NULL);
         is_reg_on = false;
     } else {
         // 当前是关 → 切换到开图片
-        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_closereg_png, NULL);
+        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_openreg_png, NULL);
         is_reg_on = true;
     }
 }
@@ -186,14 +184,12 @@ void toggle_btn_wash(lv_event_t * e)
 {
 	// Your code here
 	lv_obj_t * btn = lv_event_get_target(e);
-    if (is_air_on) {
-        // 当前是开 → 切换到关图片
-        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_openclean_png, NULL);
-        is_air_on = false;
+    if (is_wash_on) {
+        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_closewash_png, NULL);
+        is_wash_on = false;
     } else {
-        // 当前是关 → 切换到开图片
-        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_closeclean_png, NULL);
-        is_air_on = true;
+        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_openwash_png, NULL);
+        is_wash_on = true;
     }
 }
 
@@ -205,11 +201,11 @@ void toggle_btn_cur(lv_event_t * e)
 	lv_obj_t * btn = lv_event_get_target(e);
     if (is_cur_on) {
         // 当前是开 → 切换到关图片
-        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_opencur_png, NULL);
+        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_closecur_png, NULL);
         is_cur_on = false;
     } else {
         // 当前是关 → 切换到开图片
-        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_closecur_png, NULL);
+        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL, &ui_img_opencur_png, NULL);
         is_cur_on = true;
     }
 }

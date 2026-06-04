@@ -649,11 +649,7 @@ void ui_event_videoContain2(lv_event_t * e)
 }
 void ui_event_timeSlider3(lv_event_t * e)
 {
-    lv_event_code_t event_code = lv_event_get_code(e);
-    lv_obj_t * target = lv_event_get_target(e);
-    if(event_code == LV_EVENT_CLICKED) {
-        sound_time_fun(e);
-    }
+    sound_time_fun(e);
 }
 void ui_event_mainFunBut3(lv_event_t * e)
 {
@@ -746,11 +742,7 @@ void ui_event_videoContain(lv_event_t * e)
 }
 void ui_event_timeSlider(lv_event_t * e)
 {
-    lv_event_code_t event_code = lv_event_get_code(e);
-    lv_obj_t * target = lv_event_get_target(e);
-    if(event_code == LV_EVENT_CLICKED) {
-        video_time_fun(e);
-    }
+    video_time_fun(e);
 }
 
 ///////////////////// SCREENS ////////////////////

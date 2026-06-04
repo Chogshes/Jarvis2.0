@@ -21,13 +21,13 @@ static int          g_cur       = 0;
 // ── State ─────────────────────────────────────────────────
 static int g_state      = MUSIC_STATE_STOPPED;
 static int g_volume     = 95;
-static int g_dragging   = 0;
+static int g_slider_dragging = 0;
 static int g_last_idx   = -1;
 static lv_timer_t *g_timer = NULL;
 
-// ── Lyrics labels ─────────────────────────────────────────
+// ── Lyrics buffer ─────────────────────────────────────────
 #define LYR_N 7
-static lv_obj_t *g_labels[LYR_N] = {NULL};
+static char g_lyric_buf[4096];
 
 // ── Helpers ───────────────────────────────────────────────
 static void fmt_time(int ms, char *buf, int sz)
@@ -90,6 +90,16 @@ static void load_and_play(int idx)
             dur = min * 60000 + sec * 1000 + ms;
         }
     }
+    if (dur <= 0) {
+        // LRC 没有 end 标签 → 从 MP3 文件大小估算时长 (假设 128kbps)
+        FILE *mp3 = fopen(g_paths[idx], "rb");
+        if (mp3) {
+            fseek(mp3, 0, SEEK_END);
+            long fsize = ftell(mp3);
+            fclose(mp3);
+            if (fsize > 0) dur = (int)(fsize * 8LL / 128000 * 1000);
+        }
+    }
     if (dur > 0) {
         audio_set_duration(dur);
         char tbuf[16];
@@ -102,7 +112,7 @@ static void load_and_play(int idx)
     // Reset UI
     lv_slider_set_value(ui_timeSlider3, 0, LV_ANIM_OFF);
     lv_label_set_text(ui_nowtimeLabel3, "0:00");
-    g_dragging = 0;
+    g_slider_dragging = 0;
     lv_obj_scroll_to_y(ui_songerText, 0, LV_ANIM_OFF);
     lv_textarea_set_text(ui_musicTextArea, "");
 
@@ -110,11 +120,6 @@ static void load_and_play(int idx)
     char bmp[256];
     snprintf(bmp, sizeof(bmp), "S:/Mydata/music/%d.bmp", idx + 1);
     lv_img_set_src(ui_musiceCordImage, bmp);
-
-    // Hide old lyrics labels
-    for (int i = 0; i < LYR_N; i++) {
-        if (g_labels[i]) lv_obj_add_flag(g_labels[i], LV_OBJ_FLAG_HIDDEN);
-    }
 
     // Start audio playback
     g_state = MUSIC_STATE_PLAYING;
@@ -136,58 +141,46 @@ static void timer_cb(lv_timer_t *t)
     int cur = audio_get_time_ms();
     int dur = audio_get_duration_ms();
 
-    // Progress slider — skip update while user is dragging
-    if (dur > 0) {
-        if (g_dragging > 0) g_dragging--;
-        if (!g_dragging)
+    // Progress slider — skip while dragging or waiting for seek
+    if (dur > 0 && ui_timeSlider3) {
+        if (g_slider_dragging > 0) g_slider_dragging--;
+        if (!g_slider_dragging)
             lv_slider_set_value(ui_timeSlider3, cur * 100 / dur, LV_ANIM_OFF);
     }
 
     char buf[16];
     fmt_time(cur, buf, sizeof(buf));
-    lv_label_set_text(ui_nowtimeLabel3, buf);
+    if (ui_nowtimeLabel3) lv_label_set_text(ui_nowtimeLabel3, buf);
     if (dur > 0) {
         fmt_time(dur, buf, sizeof(buf));
-        lv_label_set_text(ui_sumtimeLabel3, buf);
+        if (ui_sumtimeLabel3) lv_label_set_text(ui_sumtimeLabel3, buf);
     }
 
-    // Lyrics display
+    // Lyrics display — write directly into musicTextArea
     if (!lyrics_has_loaded()) return;
-
-    // Lazy-create lyric labels positioned over the text area
-    if (!g_labels[0]) {
-        for (int i = 0; i < LYR_N; i++) {
-            g_labels[i] = lv_label_create(lv_obj_get_parent(ui_musicTextArea));
-            lv_obj_set_width(g_labels[i], 400);
-            lv_obj_set_style_text_align(g_labels[i], LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-            lv_obj_set_style_text_font(g_labels[i], &cjk_font_20, LV_PART_MAIN);
-            lv_obj_set_style_text_color(g_labels[i], lv_color_hex(0x888888), LV_PART_MAIN);
-            lv_label_set_long_mode(g_labels[i], LV_LABEL_LONG_CLIP);
-        }
-    }
 
     int idx = lyrics_get_current_line_index(cur);
     if (idx < 0) return;
     if (idx == g_last_idx && cur > 0) return;
     g_last_idx = idx;
 
-    lv_coord_t bx = lv_obj_get_x(ui_musicTextArea);
-    lv_coord_t by = lv_obj_get_y(ui_musicTextArea);
     int total = lyrics_get_total_count();
+    int start = idx - LYR_N / 2;
+    if (start < 0) start = 0;
 
-    for (int i = 0; i < LYR_N; i++) {
-        int li = idx - LYR_N / 2 + i;
-        if (li >= 0 && li < total) {
-            const char *ln = lyrics_get_line(li);
-            lv_label_set_text(g_labels[i], ln ? ln : "");
-            lv_obj_set_style_text_color(g_labels[i],
-                li == idx ? lv_color_hex(0xFFFFFF) : lv_color_hex(0x888888), LV_PART_MAIN);
-            lv_obj_set_pos(g_labels[i], bx, by + i * 30);
-            lv_obj_clear_flag(g_labels[i], LV_OBJ_FLAG_HIDDEN);
-        } else {
-            lv_obj_add_flag(g_labels[i], LV_OBJ_FLAG_HIDDEN);
-        }
+    int pos = 0;
+    for (int i = 0; i < LYR_N && start + i < total; i++) {
+        const char *ln = lyrics_get_line(start + i);
+        if (!ln) ln = "";
+        if (start + i == idx)
+            pos += snprintf(g_lyric_buf + pos, sizeof(g_lyric_buf) - pos,
+                            "> %s\n", ln);
+        else
+            pos += snprintf(g_lyric_buf + pos, sizeof(g_lyric_buf) - pos,
+                            "  %s\n", ln);
     }
+    if (ui_musicTextArea)
+        lv_textarea_set_text(ui_musicTextArea, g_lyric_buf);
 }
 
 // ── Public API ────────────────────────────────────────────
@@ -197,9 +190,20 @@ void music_init(void)
     g_state    = MUSIC_STATE_STOPPED;
     g_cur      = 0;
     g_volume   = 95;
-    g_dragging = 0;
+    g_slider_dragging = 0;
     g_last_idx = -1;
     audio_set_volume(g_volume);
+
+    // Set CJK font on Chinese text controls (with NULL guard)
+    if (ui_musicTextArea)
+        lv_obj_set_style_text_font(ui_musicTextArea, &cjk_font_20, LV_PART_MAIN);
+    if (ui_songerText)
+        lv_obj_set_style_text_font(ui_songerText, &cjk_font_20, LV_PART_MAIN);
+
+    // Set initial button image to start (stopped state)
+    if (ui_stopButt)
+        lv_imgbtn_set_src(ui_stopButt, LV_IMGBTN_STATE_RELEASED, NULL,
+                          &ui_img_start_png, NULL);
 
     if (!g_timer)
         g_timer = lv_timer_create(timer_cb, 300, NULL);
@@ -211,13 +215,6 @@ void music_deinit(void)
     if (g_timer) {
         lv_timer_del(g_timer);
         g_timer = NULL;
-    }
-    // Delete lyric labels
-    for (int i = 0; i < LYR_N; i++) {
-        if (g_labels[i]) {
-            lv_obj_del(g_labels[i]);
-            g_labels[i] = NULL;
-        }
     }
 }
 
@@ -248,9 +245,6 @@ void music_stop(void)
     lv_label_set_text(ui_nowtimeLabel3, "0:00");
     lv_label_set_text(ui_sumtimeLabel3, "0:00");
 
-    for (int i = 0; i < LYR_N; i++) {
-        if (g_labels[i]) lv_obj_add_flag(g_labels[i], LV_OBJ_FLAG_HIDDEN);
-    }
 }
 
 void music_pause(void)
@@ -308,8 +302,11 @@ int music_get_playlist_count(void) { return g_pls_count; }
 
 void music_on_play_pause_btn(lv_event_t *e)
 {
-    (void)e;
+    lv_obj_t *btn = lv_event_get_target(e);
     music_toggle_pause();
+    int s = music_get_state();
+    lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL,
+        s == MUSIC_STATE_PLAYING ? &ui_img_stop_png : &ui_img_start_png, NULL);
 }
 
 void music_on_next_btn(lv_event_t *e)
@@ -333,29 +330,23 @@ void music_on_volume_slider(lv_event_t *e)
 
 void music_on_time_slider(lv_event_t *e)
 {
+    if (!e) return;
+    int dur = audio_get_duration_ms();
+    if (dur <= 0) return;
+    int pct = lv_slider_get_value(ui_timeSlider3);
+    int target = dur * pct / 100;
     lv_event_code_t code = lv_event_get_code(e);
 
-    if (code == LV_EVENT_PRESSED) {
-        g_dragging = 3;
-    } else if (code == LV_EVENT_VALUE_CHANGED && g_dragging) {
-        // Update time label to reflect seek preview
-        int dur = audio_get_duration_ms();
-        if (dur > 0) {
-            lv_obj_t *slider = lv_event_get_target(e);
-            int pct = lv_slider_get_value(slider);
-            int ms = dur * pct / 100;
-            char buf[16];
-            fmt_time(ms, buf, sizeof(buf));
-            lv_label_set_text(ui_nowtimeLabel3, buf);
-        }
+    if (code == LV_EVENT_VALUE_CHANGED) {
+        int cur_pct = audio_get_duration_ms() > 0 ?
+            audio_get_time_ms() * 100 / audio_get_duration_ms() : 0;
+        if (abs(pct - cur_pct) <= 2 && g_slider_dragging == 0) return;
+        g_slider_dragging = 1;
+        char buf[16];
+        fmt_time(target, buf, sizeof(buf));
+        lv_label_set_text(ui_nowtimeLabel3, buf);
     } else if (code == LV_EVENT_RELEASED) {
-        int dur = audio_get_duration_ms();
-        if (dur > 0) {
-            lv_obj_t *slider = lv_event_get_target(e);
-            int pct = lv_slider_get_value(slider);
-            int ms = dur * pct / 100;
-            audio_seek(ms);
-        }
-        g_dragging = 0;
+        audio_seek(target);
+        g_slider_dragging = 5;
     }
 }

@@ -8,12 +8,6 @@ extern "C" {
 #include "lvgl/lvgl.h"
 #include <stdint.h>
 
-#define VIDEO_MAX_PLAYLIST 64
-
-#define VIDEO_STATE_STOPPED  0
-#define VIDEO_STATE_PLAYING  1
-#define VIDEO_STATE_PAUSED   2
-
 // ── Low-level player API (pl_mpeg wrapper) ──────────────
 void   video_play(const char *path);
 void   video_stop(void);
@@ -30,20 +24,6 @@ int    video_get_frame(uint8_t **buf, int *w, int *h);
 // ── High-level UI module API ────────────────────────────
 void video_module_init(void);
 void video_module_deinit(void);
-
-void video_set_playlist(const char *paths[], int count);
-int  video_play_index(int index);
-void video_stop_playback(void);
-void video_toggle_pause(void);
-void video_next(void);
-void video_prev(void);
-void video_set_volume_pct(int pct);
-
-int video_get_state(void);
-int video_get_current_index(void);
-int video_get_volume(void);
-
-// Called each frame from LVGL timer to copy decoded frame to display + update UI
 void video_render_frame(void);
 
 // UI event handlers — called from ui_events.c

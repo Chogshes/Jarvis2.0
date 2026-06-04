@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(awk '$1==\"blob\" && $2>1000000 {printf \"%d KB\\\\t%s\\\\n\", $2/1024, $3}')",
+      "Bash(awk '$1==\"blob\" && $2>100000000 {printf \"%d MB\\\\t%s\\\\n\", $2/1024/1024, $3}')",
+      "Bash(xargs echo \"Total staged files:\")",
+      "Bash(xargs echo \"Large binary files staged:\")",
+      "Bash(git config *)"
+    ]
+  }
+}

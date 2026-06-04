@@ -1,10 +1,10 @@
-// video.c —— pl_mpeg 解码 + ring buffer 音频 + LVGL 渲染 + UI 控制
+// video.c —— pl_mpeg 解码 + ring buffer 音频 + LVGL canvas 渲染
 //
 // 架构说明：
 //   解码线程 → on_audio() 非阻塞 push → ring buffer → 音频线程 阻塞 write OSS
-//   解码线程 → on_video() 写 g_frame → UI 定时器 取帧 swizzle → LVGL image
-//   OSS write 不再阻塞解码循环，确保视频帧率不受音频 I/O 影响。
-//
+//   解码线程 → on_video() 写 g_frame → UI 定时器 → LVGL canvas 渲染
+//   播放器 UI 事件直接在视频模块内处理
+
 #include "video.h"
 #include "ui.h"
 #include <stdio.h>
@@ -18,45 +18,36 @@
 #define PL_MPEG_IMPLEMENTATION
 #include "pl_mpeg.h"
 
-// ── Forward declarations ─────────────────────────────────
+LV_FONT_DECLARE(cjk_font_20);
+
 void audio_stop(void);
 
 // ═══════════════════════════════════════════════════════════
 //  Ring buffer (SPSC, lock-free)
 // ═══════════════════════════════════════════════════════════
-#define RING_MASK  0x7FFF          // 32768 个采样点 ≈ 0.74s @ 44100Hz
+#define RING_MASK  0x7FFF
 #define RING_SIZE  (RING_MASK + 1)
 
 static short          g_ring[RING_SIZE];
-static volatile int   g_ring_w = 0;   // decode 线程写
-static volatile int   g_ring_r = 0;   // audio 线程读
+static volatile int   g_ring_w = 0;
+static volatile int   g_ring_r = 0;
 static pthread_t      g_audio_tid;
 static volatile int   g_audio_alive = 0;
 static volatile int   g_audio_stop  = 0;
 static int            g_audio_rate  = 44100;
 
-static int ring_available(void)
-{
-    return (g_ring_w - g_ring_r) & RING_MASK;
-}
+static int ring_available(void) { return (g_ring_w - g_ring_r) & RING_MASK; }
 
-static int ring_space(void)
-{
-    return RING_SIZE - 1 - ring_available();
-}
-
-// push n 个 short → ring；放不下则丢弃（不阻塞）
 static void ring_push(const short *data, int n)
 {
     for (int i = 0; i < n; i++) {
         int next = (g_ring_w + 1) & RING_MASK;
-        if (next == g_ring_r) return;   // 满，丢弃剩余采样
+        if (next == g_ring_r) return;
         g_ring[g_ring_w] = data[i];
         g_ring_w = next;
     }
 }
 
-// pop 最多 max 个 short → buf；返回实际读取数
 static int ring_pop(short *buf, int max)
 {
     int n = 0;
@@ -67,12 +58,9 @@ static int ring_pop(short *buf, int max)
     return n;
 }
 
-// ── 音频输出线程 ─────────────────────────────────────────
 static void *audio_thread(void *arg)
 {
     (void)arg;
-
-    // 打开 DSP
     int dsp = open("/dev/dsp", O_WRONLY);
     if (dsp < 0) dsp = open("/dev/dsp1", O_WRONLY);
     if (dsp < 0) { g_audio_alive = 0; return NULL; }
@@ -86,18 +74,15 @@ static void *audio_thread(void *arg)
     while (!g_audio_stop) {
         int n = ring_pop(buf, 512);
         if (n > 0) {
-            write(dsp, buf, n * sizeof(short));   // 这里阻塞不会影响解码线程
+            write(dsp, buf, n * sizeof(short));
         } else {
-            usleep(5000);   // 缓冲区空，短暂休眠
+            usleep(5000);
         }
     }
-
-    // 排空残余数据
     while (ring_available() > 0) {
         int n = ring_pop(buf, 512);
         if (n > 0) write(dsp, buf, n * sizeof(short));
     }
-
     close(dsp);
     g_audio_alive = 0;
     return NULL;
@@ -106,8 +91,7 @@ static void *audio_thread(void *arg)
 static void audio_thread_start(void)
 {
     if (g_audio_alive) return;
-    g_ring_w      = 0;
-    g_ring_r      = 0;
+    g_ring_w = 0; g_ring_r = 0;
     g_audio_stop  = 0;
     g_audio_alive = 1;
     pthread_create(&g_audio_tid, NULL, audio_thread, NULL);
@@ -118,8 +102,7 @@ static void audio_thread_stop(void)
 {
     if (!g_audio_alive) return;
     g_audio_stop = 1;
-    for (int i = 0; i < 40 && g_audio_alive; i++)
-        usleep(50000);   // 等待最多 2 秒
+    for (int i = 0; i < 40 && g_audio_alive; i++) usleep(50000);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -144,38 +127,28 @@ static pthread_t       g_thread;
 static pthread_mutex_t g_mutex = PTHREAD_MUTEX_INITIALIZER;
 static uint8_t        *g_frame = NULL;
 
-// ── 音频回调 (解码线程内调用，快速非阻塞) ─────────────────
 static void on_audio(plm_t *pl, plm_samples_t *s, void *user)
 {
-    (void)pl;
-    (void)user;
+    (void)pl; (void)user;
     if (!s || s->count <= 0) return;
 
     float gain = (float)g_low_volume / 100.f;
-    int   n    = s->count;
-
-    // 栈上 buffer，避免每次 malloc/free
     short buf[1024];
-    int out = 0;
-    int max = (int)(sizeof(buf) / sizeof(buf[0]));
+    int out = 0, max = (int)(sizeof(buf) / sizeof(buf[0]));
 
-    for (int i = 0; i < n * 2 && out < max; i += 2) {
+    for (int i = 0; i < s->count * 2 && out < max; i += 2) {
         float f = s->interleaved[i] * gain;
-        if (f >  1.0f) f =  1.0f;
-        if (f < -1.0f) f = -1.0f;
+        if (f > 1.0f) f = 1.0f; else if (f < -1.0f) f = -1.0f;
         buf[out++] = (short)(f * 32767.f) ^ 0x8000;
         buf[out++] = (short)(f * 32767.f) ^ 0x8000;
     }
-    ring_push(buf, out);   // 非阻塞，满了就丢
+    ring_push(buf, out);
 }
 
-// ── 视频回调 (解码线程内调用，只拷贝帧数据) ──────────────
 static void on_video(plm_t *pl, plm_frame_t *f, void *user)
 {
-    (void)pl;
-    (void)user;
+    (void)pl; (void)user;
     if (!f || !g_frame) return;
-
     pthread_mutex_lock(&g_mutex);
     plm_frame_to_rgba(f, g_frame, g_width * 4);
     g_frame_ready = 1;
@@ -183,27 +156,26 @@ static void on_video(plm_t *pl, plm_frame_t *f, void *user)
     g_current_time = f->time;
 }
 
-// ── 解码线程 ─────────────────────────────────────────────
 static void *th(void *arg)
 {
     const char *path = (const char *)arg;
     plm_t *pl = plm_create_with_filename(path);
-    if (!pl) { free(arg); return NULL; }
+    if (!pl) { free(arg); g_alive = 0; g_playing = 0; return NULL; }
 
     plm_set_loop(pl, 0);
-    g_width       = plm_get_width(pl);
-    g_height      = plm_get_height(pl);
-    g_duration    = plm_get_duration(pl);
-    g_audio_rate  = plm_get_samplerate(pl);
+    g_width      = plm_get_width(pl);
+    g_height     = plm_get_height(pl);
+    g_duration   = plm_get_duration(pl);
+    g_audio_rate = plm_get_samplerate(pl);
 
     pthread_mutex_lock(&g_mutex);
+    free(g_frame);
     g_frame = malloc(g_width * g_height * 4);
     pthread_mutex_unlock(&g_mutex);
 
     plm_set_video_decode_callback(pl, on_video, NULL);
     plm_set_audio_decode_callback(pl, on_audio, NULL);
 
-    // 启动音频输出线程（首次音频回调到来前启动，保证有数据可写）
     audio_thread_start();
 
     double t = 0;
@@ -226,7 +198,6 @@ static void *th(void *arg)
         if (plm_has_ended(pl)) break;
     }
 
-    // 停止音频线程（排空 ring buffer 残余）
     audio_thread_stop();
     plm_destroy(pl);
     free(arg);
@@ -235,20 +206,18 @@ static void *th(void *arg)
     return NULL;
 }
 
-// ── Low-level public API ─────────────────────────────────
-
 void video_play(const char *path)
 {
     video_stop();
     audio_stop();
 
     char *copy = strdup(path);
-    g_playing       = 1;
-    g_paused        = 0;
-    g_stop          = 0;
-    g_seek_target   = -1;
-    g_current_time  = 0;
-    g_alive         = 1;
+    g_playing      = 1;
+    g_paused       = 0;
+    g_stop         = 0;
+    g_seek_target  = -1;
+    g_current_time = 0;
+    g_alive        = 1;
     pthread_create(&g_thread, NULL, th, copy);
 }
 
@@ -262,284 +231,248 @@ void video_stop(void)
     g_alive = 0;
 }
 
-void video_pause(void)          { g_paused = 1; }
-void video_resume(void)         { g_paused = 0; }
-int  video_is_playing(void)     { return g_playing && !g_paused; }
-int  video_is_paused(void)      { return g_paused; }
-double video_get_time(void)     { return g_current_time; }
-double video_get_duration(void) { return g_duration; }
-void video_seek(double seconds) { g_seek_target = seconds; }
+void video_pause(void)                   { g_paused = 1; }
+void video_resume(void)                  { g_paused = 0; }
+int  video_is_playing(void)              { return g_playing && !g_paused; }
+int  video_is_paused(void)               { return g_paused; }
+double video_get_time(void)              { return g_current_time; }
+double video_get_duration(void)          { return g_duration; }
+void video_seek(double seconds)          { g_seek_target = seconds; }
 
 void video_set_volume(int pct)
 {
-    if (pct < 0) pct = 0;
-    if (pct > 100) pct = 100;
+    if (pct < 0) pct = 0; else if (pct > 100) pct = 100;
     g_low_volume = pct;
 }
 
 int video_get_frame(uint8_t **buf, int *w, int *h)
 {
-    if (!g_frame_ready || !g_frame) return 0;
-    *w   = g_width;
-    *h   = g_height;
-    *buf = g_frame;
+    pthread_mutex_lock(&g_mutex);
+    if (!g_frame_ready || !g_frame) { pthread_mutex_unlock(&g_mutex); return 0; }
+    *w = g_width; *h = g_height; *buf = g_frame;
+    pthread_mutex_unlock(&g_mutex);
     return 1;
 }
 
 // ═══════════════════════════════════════════════════════════
-//  高层 UI 模块 (playlist / 状态 / 事件 / LVGL 渲染)
+//  高层 UI 模块 (LVGL canvas 渲染 + 定时器 + 事件处理)
 // ═══════════════════════════════════════════════════════════
 
-#define DEFAULT_VPLS_COUNT 4
-static const char *g_default_vpls[DEFAULT_VPLS_COUNT] = {
+#define VPLS 4
+static const char *g_vpaths[VPLS] = {
     "/Mydata/video/1.mpg", "/Mydata/video/2.mpg",
     "/Mydata/video/3.mpg", "/Mydata/video/4.mpg"
 };
-static const char **g_vpls      = g_default_vpls;
-static int          g_vpls_cnt  = DEFAULT_VPLS_COUNT;
-static int          g_vcur      = 0;
+static int g_vcur = 0;
 
-static int          g_state     = VIDEO_STATE_STOPPED;
-static int          g_vol       = 100;
-static int          g_dragging  = 0;
-static lv_timer_t  *g_ui_timer = NULL;
+static lv_obj_t    *g_video_canvas = NULL;
+static lv_color_t  *g_canvas_buf   = NULL;
+static int          g_canvas_w     = 0;
+static int          g_canvas_h     = 0;
+static lv_timer_t  *g_vtimer        = NULL;
+static int          g_vdragging      = 0;
 
-// ── Video render state ───────────────────────────────────
-static lv_obj_t    *g_render_img  = NULL;
-static uint8_t     *g_sw_buf      = NULL;   // RGBA→BGRA swizzle buffer
-static lv_img_dsc_t g_render_desc;
-static int          g_alloc_w     = 0;
-static int          g_alloc_h     = 0;
-
-static void fmt_time_v(int ms, char *buf, int sz)
-{
-    int m = ms / 60000, s = (ms % 60000) / 1000;
-    snprintf(buf, sz, "%d:%02d", m, s);
-}
-
-static void ensure_render_buf(int w, int h)
-{
-    if (g_sw_buf && g_alloc_w == w && g_alloc_h == h) return;
-    free(g_sw_buf);
-    g_sw_buf = malloc(w * h * 4);
-    g_render_desc.header.cf        = LV_IMG_CF_TRUE_COLOR_ALPHA;
-    g_render_desc.header.w         = w;
-    g_render_desc.header.h         = h;
-    g_render_desc.data_size        = w * h * 4;
-    g_render_desc.data             = g_sw_buf;
-    g_alloc_w = w;
-    g_alloc_h = h;
-
-    // 等比缩放适配容器
-    lv_coord_t cw = lv_obj_get_width(ui_videoContain);
-    lv_coord_t ch = lv_obj_get_height(ui_videoContain);
-    float scale = ((float)w / cw > (float)h / ch) ? (float)cw / w : (float)ch / h;
-    lv_obj_set_size(g_render_img, (lv_coord_t)(w * scale), (lv_coord_t)(h * scale));
-    lv_obj_center(g_render_img);
-}
-
-// ── UI 定时器：渲染帧 + 更新进度条 ──────────────────────
-static void ui_timer_cb(lv_timer_t *t)
+static void video_timer_cb(lv_timer_t *t)
 {
     (void)t;
+    // 全程摘掉 slider 事件回调，timer 更新滑块时不会触发 VALUE_CHANGED 到 handler
+    if (ui_timeSlider) lv_obj_remove_event_cb(ui_timeSlider, ui_event_timeSlider);
 
-    // 播放自然结束 → 停止
-    if (g_state == VIDEO_STATE_PLAYING && !g_alive && !video_is_playing()) {
-        video_stop_playback();
-        return;
+    if (!video_is_playing() && !video_is_paused()) goto done;
+    if (!ui_videoContain) goto done;
+
+    // 不在视频页面就自动暂停
+    if (lv_scr_act() != lv_obj_get_screen(ui_videoContain)) {
+        if (video_is_playing()) video_pause();
+        goto done;
     }
 
-    // 取出解码帧并渲染到 ui_videoContain
-    uint8_t *src;
-    int w, h;
-    if (video_get_frame(&src, &w, &h)) {
-        ensure_render_buf(w, h);
-        int px = w * h;
-        for (int i = 0; i < px; i++) {
-            g_sw_buf[i * 4 + 0] = src[i * 4 + 2];   // R→B
-            g_sw_buf[i * 4 + 1] = src[i * 4 + 1];   // G→G
-            g_sw_buf[i * 4 + 2] = src[i * 4 + 0];   // B→R
-            g_sw_buf[i * 4 + 3] = src[i * 4 + 3];   // A→A
+    // 取出帧 → 渲染到 LVGL canvas
+    uint8_t *src; int w, h;
+    if (g_video_canvas && video_get_frame(&src, &w, &h)) {
+        // 懒分配 / 重分配 canvas buffer
+        if (!g_canvas_buf || g_canvas_w != w || g_canvas_h != h) {
+            free(g_canvas_buf);
+            g_canvas_buf = malloc(w * h * sizeof(lv_color_t));
+            g_canvas_w = w; g_canvas_h = h;
+            if (g_canvas_buf) {
+                lv_canvas_set_buffer(g_video_canvas, g_canvas_buf, w, h, LV_IMG_CF_TRUE_COLOR);
+                // 等比缩放适配容器
+                lv_coord_t cw = lv_obj_get_width(ui_videoContain);
+                lv_coord_t ch = lv_obj_get_height(ui_videoContain);
+                float scale = ((float)w / cw > (float)h / ch) ? (float)cw / w : (float)ch / h;
+                lv_obj_set_size(g_video_canvas, (lv_coord_t)(w * scale), (lv_coord_t)(h * scale));
+                lv_obj_center(g_video_canvas);
+            }
         }
-        lv_img_set_src(g_render_img, &g_render_desc);
+        // RGBA → lv_color_t
+        if (g_canvas_buf) {
+            for (int i = 0; i < w * h; i++)
+                g_canvas_buf[i] = lv_color_make(src[i*4], src[i*4+1], src[i*4+2]);
+            lv_obj_invalidate(g_video_canvas);
+        }
     }
 
-    if (g_state == VIDEO_STATE_STOPPED) return;
+    // 进度条
+    int cur = (int)video_get_time(), dur = (int)video_get_duration();
+    if (dur > 0 && ui_timeSlider) {
+        if (g_vdragging > 0) g_vdragging--;
+        if (!g_vdragging)
+            lv_slider_set_value(ui_timeSlider, cur * 100 / dur, LV_ANIM_OFF);
+    }
+    char b[16];
+    snprintf(b, sizeof(b), "%d:%02d", cur / 60, cur % 60);
+    if (ui_nowtimeLabel) lv_label_set_text(ui_nowtimeLabel, b);
+    if (dur > 0 && ui_sumtimeLabel) {
+        snprintf(b, sizeof(b), "%d:%02d", dur / 60, dur % 60);
+        lv_label_set_text(ui_sumtimeLabel, b);
+    }
 
-    int cur_ms = (int)(video_get_time() * 1000);
-    int dur_ms = (int)(video_get_duration() * 1000);
-    if (dur_ms > 0) {
-        if (g_dragging > 0) g_dragging--;
-        if (!g_dragging)
-            lv_slider_set_value(ui_timeSlider, cur_ms * 100 / dur_ms, LV_ANIM_OFF);
-    }
-    char buf[16];
-    fmt_time_v(cur_ms, buf, sizeof(buf));
-    lv_label_set_text(ui_nowtimeLabel, buf);
-    if (dur_ms > 0) {
-        fmt_time_v(dur_ms, buf, sizeof(buf));
-        lv_label_set_text(ui_sumtimeLabel, buf);
-    }
+done:
+    if (ui_timeSlider) lv_obj_add_event_cb(ui_timeSlider, ui_event_timeSlider, LV_EVENT_ALL, NULL);
 }
 
-// ── 启动播放播放列表项 ─────────────────────────────────
-static void start_playback(int idx)
-{
-    if (idx < 0 || idx >= g_vpls_cnt) return;
-    g_vcur  = idx;
-    g_state = VIDEO_STATE_PLAYING;
-
-    lv_slider_set_value(ui_timeSlider, 0, LV_ANIM_OFF);
-    lv_label_set_text(ui_nowtimeLabel, "0:00");
-    lv_label_set_text(ui_sumtimeLabel, "0:00");
-    g_dragging = 0;
-
-    if (g_render_img) lv_obj_add_flag(g_render_img, LV_OBJ_FLAG_HIDDEN);
-
-    const char *name = strrchr(g_vpls[idx], '/');
-    lv_label_set_text(ui_videoText, name ? name + 1 : g_vpls[idx]);
-
-    video_play(g_vpls[idx]);
-
-    if (g_render_img) lv_obj_clear_flag(g_render_img, LV_OBJ_FLAG_HIDDEN);
-}
-
-// ── High-level public API ────────────────────────────────
+// ── 初始化 ──────────────────────────────────────────────
 
 void video_module_init(void)
 {
-    g_state    = VIDEO_STATE_STOPPED;
-    g_vcur     = 0;
-    g_vol      = 100;
-    g_dragging = 0;
-    video_set_volume(g_vol);
-
-    if (!g_render_img) {
-        // 在 ui_videoContain 内创建渲染用的 image 对象
-        g_render_img = lv_img_create(ui_videoContain);
-        lv_obj_center(g_render_img);
-        lv_obj_add_flag(g_render_img, LV_OBJ_FLAG_HIDDEN);
+    if (!g_video_canvas && ui_videoContain) {
+        g_video_canvas = lv_canvas_create(ui_videoContain);
+        lv_obj_center(g_video_canvas);
     }
+    if (ui_videoText)
+        lv_obj_set_style_text_font(ui_videoText, &cjk_font_20, LV_PART_MAIN);
 
-    lv_slider_set_value(ui_Slider4, g_vol, LV_ANIM_OFF);
-
-    if (!g_ui_timer)
-        g_ui_timer = lv_timer_create(ui_timer_cb, 33, NULL);
+    if (!g_vtimer)
+        g_vtimer = lv_timer_create(video_timer_cb, 30, NULL);
 }
 
 void video_module_deinit(void)
 {
-    video_stop_playback();
-    if (g_ui_timer) { lv_timer_del(g_ui_timer); g_ui_timer = NULL; }
-    if (g_render_img) { lv_obj_del(g_render_img); g_render_img = NULL; }
-    free(g_sw_buf);
-    g_sw_buf  = NULL;
-    g_alloc_w = 0;
-    g_alloc_h = 0;
-}
-
-void video_set_playlist(const char *paths[], int count)
-{
-    if (!paths || count <= 0 || count > VIDEO_MAX_PLAYLIST) return;
-    g_vpls     = paths;
-    g_vpls_cnt = count;
-    g_vcur     = 0;
-}
-
-int video_play_index(int index)
-{
-    if (index < 0 || index >= g_vpls_cnt) return -1;
-    start_playback(index);
-    return 0;
-}
-
-void video_stop_playback(void)
-{
+    if (g_vtimer) { lv_timer_del(g_vtimer); g_vtimer = NULL; }
     video_stop();
-    g_state = VIDEO_STATE_STOPPED;
-    lv_slider_set_value(ui_timeSlider, 0, LV_ANIM_OFF);
-    lv_label_set_text(ui_nowtimeLabel, "0:00");
-    lv_label_set_text(ui_sumtimeLabel, "0:00");
-    if (g_render_img) lv_obj_add_flag(g_render_img, LV_OBJ_FLAG_HIDDEN);
+    if (g_video_canvas) { lv_obj_del(g_video_canvas); g_video_canvas = NULL; }
+    free(g_canvas_buf); g_canvas_buf = NULL;
+    g_canvas_w = 0; g_canvas_h = 0;
 }
 
-void video_toggle_pause(void)
-{
-    if (g_state == VIDEO_STATE_PLAYING)       { video_pause();  g_state = VIDEO_STATE_PAUSED; }
-    else if (g_state == VIDEO_STATE_PAUSED)   { video_resume(); g_state = VIDEO_STATE_PLAYING; }
-    else if (g_state == VIDEO_STATE_STOPPED)  { start_playback(g_vcur); }
-}
+void video_render_frame(void) { /* 由定时器调用 */ }
 
-void video_next(void)
-{
-    if (g_vpls_cnt == 0) return;
-    g_vcur = (g_vcur + 1) % g_vpls_cnt;
-    start_playback(g_vcur);
-}
+// ── UI 事件处理 (由 ui_events.c 调用) ────────────────────
 
-void video_prev(void)
+void video_on_play_pause_btn(lv_event_t *e)
 {
-    if (g_vpls_cnt == 0) return;
-    g_vcur = (g_vcur - 1 + g_vpls_cnt) % g_vpls_cnt;
-    start_playback(g_vcur);
-}
+    if (!e || lv_event_get_code(e) != LV_EVENT_CLICKED) return;
 
-void video_set_volume_pct(int pct)
-{
-    if (pct < 0) pct = 0;
-    if (pct > 100) pct = 100;
-    g_vol = pct;
-    video_set_volume(pct);
-}
-
-int video_get_state(void)          { return g_state; }
-int video_get_current_index(void)  { return g_vcur; }
-int video_get_volume(void)         { return g_vol; }
-
-void video_render_frame(void)
-{
-    uint8_t *src;
-    int w, h;
-    if (!video_get_frame(&src, &w, &h)) return;
-    ensure_render_buf(w, h);
-    int px = w * h;
-    for (int i = 0; i < px; i++) {
-        g_sw_buf[i * 4 + 0] = src[i * 4 + 2];
-        g_sw_buf[i * 4 + 1] = src[i * 4 + 1];
-        g_sw_buf[i * 4 + 2] = src[i * 4 + 0];
-        g_sw_buf[i * 4 + 3] = src[i * 4 + 3];
+    if (video_is_playing()) {
+        video_pause();
+        lv_imgbtn_set_src(ui_stopButt2, LV_IMGBTN_STATE_RELEASED, NULL,
+                          &ui_img_start_png, NULL);
+    } else if (video_is_paused()) {
+        video_resume();
+        lv_imgbtn_set_src(ui_stopButt2, LV_IMGBTN_STATE_RELEASED, NULL,
+                          &ui_img_stop_png, NULL);
+    } else {
+        video_play(g_vpaths[g_vcur]);
+        lv_imgbtn_set_src(ui_stopButt2, LV_IMGBTN_STATE_RELEASED, NULL,
+                          &ui_img_stop_png, NULL);
     }
-    lv_img_set_src(g_render_img, &g_render_desc);
+
+    // 读取视频标题（从 .txt 文件首行）
+    char tpath[256];
+    snprintf(tpath, sizeof(tpath), "/Mydata/video/%d.txt", g_vcur + 1);
+    FILE *tf = fopen(tpath, "r");
+    if (tf) {
+        char tline[256];
+        if (fgets(tline, sizeof(tline), tf)) {
+            int len = strlen(tline);
+            while (len > 0 && (tline[len-1]=='\n'||tline[len-1]=='\r')) tline[--len] = 0;
+            lv_textarea_set_text(ui_videoText, tline);
+        }
+        fclose(tf);
+    } else {
+        const char *name = strrchr(g_vpaths[g_vcur], '/');
+        lv_textarea_set_text(ui_videoText, name ? name + 1 : g_vpaths[g_vcur]);
+    }
 }
 
-// ── UI event handlers ────────────────────────────────────
+void video_on_next_btn(lv_event_t *e)
+{
+    if (!e || lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    video_stop();
+    g_vcur = (g_vcur + 1) % VPLS;
+    video_play(g_vpaths[g_vcur]);
+    lv_imgbtn_set_src(ui_stopButt2, LV_IMGBTN_STATE_RELEASED, NULL,
+                      &ui_img_stop_png, NULL);
 
-void video_on_play_pause_btn(lv_event_t *e) { (void)e; video_toggle_pause(); }
-void video_on_next_btn(lv_event_t *e)       { (void)e; video_next(); }
-void video_on_prev_btn(lv_event_t *e)       { (void)e; video_prev(); }
+    char tpath[256];
+    snprintf(tpath, sizeof(tpath), "/Mydata/video/%d.txt", g_vcur + 1);
+    FILE *tf = fopen(tpath, "r");
+    if (tf) {
+        char tline[256];
+        if (fgets(tline, sizeof(tline), tf)) {
+            int len = strlen(tline);
+            while (len > 0 && (tline[len-1]=='\n'||tline[len-1]=='\r')) tline[--len] = 0;
+            lv_textarea_set_text(ui_videoText, tline);
+        }
+        fclose(tf);
+    } else {
+        const char *name = strrchr(g_vpaths[g_vcur], '/');
+        lv_textarea_set_text(ui_videoText, name ? name + 1 : g_vpaths[g_vcur]);
+    }
+}
+
+void video_on_prev_btn(lv_event_t *e)
+{
+    if (!e || lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    video_stop();
+    g_vcur = (g_vcur - 1 + VPLS) % VPLS;
+    video_play(g_vpaths[g_vcur]);
+    lv_imgbtn_set_src(ui_stopButt2, LV_IMGBTN_STATE_RELEASED, NULL,
+                      &ui_img_stop_png, NULL);
+
+    char tpath[256];
+    snprintf(tpath, sizeof(tpath), "/Mydata/video/%d.txt", g_vcur + 1);
+    FILE *tf = fopen(tpath, "r");
+    if (tf) {
+        char tline[256];
+        if (fgets(tline, sizeof(tline), tf)) {
+            int len = strlen(tline);
+            while (len > 0 && (tline[len-1]=='\n'||tline[len-1]=='\r')) tline[--len] = 0;
+            lv_textarea_set_text(ui_videoText, tline);
+        }
+        fclose(tf);
+    } else {
+        const char *name = strrchr(g_vpaths[g_vcur], '/');
+        lv_textarea_set_text(ui_videoText, name ? name + 1 : g_vpaths[g_vcur]);
+    }
+}
 
 void video_on_volume_slider(lv_event_t *e)
 {
-    int vol = lv_slider_get_value(lv_event_get_target(e));
-    video_set_volume_pct(vol);
+    if (!e || lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    int v = lv_slider_get_value(ui_Slider4);
+    video_set_volume(v);
+    char b[16];
+    snprintf(b, sizeof(b), "%d%%", v);
+    lv_label_set_text(ui_soundLabel2, b);
 }
 
 void video_on_time_slider(lv_event_t *e)
 {
-    lv_event_code_t code = lv_event_get_code(e);
-    double dur = video_get_duration();
-
-    if (code == LV_EVENT_PRESSED) {
-        g_dragging = 3;
-    } else if (code == LV_EVENT_VALUE_CHANGED && g_dragging && dur > 0) {
-        int pct = lv_slider_get_value(lv_event_get_target(e));
-        int ms  = (int)(dur * 1000 * pct / 100);
-        char buf[16];
-        fmt_time_v(ms, buf, sizeof(buf));
-        lv_label_set_text(ui_nowtimeLabel, buf);
-    } else if (code == LV_EVENT_RELEASED && dur > 0) {
-        int pct = lv_slider_get_value(lv_event_get_target(e));
-        video_seek(dur * pct / 100);
-        g_dragging = 0;
+    if (!e) return;
+    int dur = (int)video_get_duration();
+    if (dur <= 0) return;
+    int pct = lv_slider_get_value(ui_timeSlider);
+    int target = dur * pct / 100;
+    lv_event_code_t c = lv_event_get_code(e);
+    if (c == LV_EVENT_VALUE_CHANGED) {
+        g_vdragging = 60;
+        char b[16];
+        snprintf(b, sizeof(b), "%d:%02d", target / 60, target % 60);
+        lv_label_set_text(ui_nowtimeLabel, b);
+    } else if (c == LV_EVENT_RELEASED) {
+        video_seek(target);
+        g_vdragging = 15;
     }
 }

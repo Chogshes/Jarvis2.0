@@ -1,1 +1,16 @@
-vosk-server
+# Large binary data & server — keep local, don't push to git
+websocket/vosk-model-cn-0.22/
+vosk-server/
+video/
+music/
+Mydata/
+
+# Build output
+build/
+lib/*.a
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo

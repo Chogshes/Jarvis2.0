@@ -3,7 +3,10 @@
 #include <sys/time.h>
 #include "lvgl/lvgl.h"
 #include "ui.h"
-//#include "video_player.h"
+#include "music.h"
+#include "video.h"
+
+LV_FONT_DECLARE(cjk_font_20);
 
 // 时钟初始化 (TODO: 实现时间显示)
 static void ui_clock_init(void) {}
@@ -59,6 +62,10 @@ int main(void)
     lvgl_init();
     ui_init();
     ui_clock_init();
+
+    // 初始化音乐/视频模块（创建定时器，设置中文字体）
+    music_init();
+    video_module_init();
     while (1) {
         lv_timer_handler();
         usleep(5000);

@@ -16,15 +16,15 @@ add_subdirectory(lv_drivers)
 add_subdirectory(./ui)
 
 add_executable(${PROJECT_NAME}
-    main.c  // 主程序入口
-    src/audio_output.c  // 音频输出
-    src/lyrics_parser.c // 歌词解析
-    src/music.c // 音乐播放
-    src/video.c // 视频播放
-    src/deepseek.c // DeepSeek 控制
-    src/asr.c // ASR 识别
-    src/tts.c // TTS 朗读
-    src/pipeline.c // 管线处理
+    main.c  # 主程序入口
+    src/audio_output.c  # 音频输出
+    src/lyrics_parser.c # 歌词解析
+    src/music.c # 音乐播放
+    src/video.c # 视频播放
+    src/deepseek.c # DeepSeek 控制
+    src/asr.c # ASR 识别
+    src/tts.c # TTS 朗读
+    src/pipeline.c # 管线处理
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
