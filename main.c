@@ -5,6 +5,7 @@
 #include "ui.h"
 #include "music.h"
 #include "video.h"
+#include "bemfa.h"
 
 LV_FONT_DECLARE(cjk_font_20);
 
@@ -63,9 +64,17 @@ int main(void)
     ui_init();
     ui_clock_init();
 
+    // 给主界面聊天区域设置中文字体
+    if (ui_ansText)   lv_obj_set_style_text_font(ui_ansText,   &cjk_font_20, LV_PART_MAIN);
+    if (ui_speakText) {
+        lv_obj_set_style_text_font(ui_speakText, &cjk_font_20, LV_PART_MAIN);
+        lv_obj_set_style_text_font(ui_speakText, &cjk_font_20, LV_PART_TEXTAREA_PLACEHOLDER);
+    }
+
     // 初始化音乐/视频模块（创建定时器，设置中文字体）
     music_init();
     video_module_init();
+    bemfa_start(NULL);
     while (1) {
         lv_timer_handler();
         usleep(5000);

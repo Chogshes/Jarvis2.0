@@ -71,7 +71,7 @@ static void *audio_thread(void *arg)
     if (dsp < 0) dsp = open("/dev/dsp1", O_WRONLY);
     if (dsp < 0) { g_audio_alive = 0; return NULL; }
 
-    int fmt = AFMT_U16_LE, ch = 2, rate = g_audio_rate;
+    int fmt = AFMT_S16_LE, ch = 2, rate = g_audio_rate;
     ioctl(dsp, SNDCTL_DSP_SETFMT,    &fmt);
     ioctl(dsp, SNDCTL_DSP_CHANNELS,  &ch);
     ioctl(dsp, SNDCTL_DSP_SPEED,     &rate);
@@ -169,14 +169,13 @@ static void on_audio(plm_t *pl, plm_samples_t *s, void *user)
     if (!s || s->count <= 0) return;
 
     float gain = (float)g_low_volume / 100.f;
-    short buf[1024];
+    short buf[PLM_AUDIO_SAMPLES_PER_FRAME * 2];
     int out = 0, max = (int)(sizeof(buf) / sizeof(buf[0]));
 
-    for (int i = 0; i < s->count * 2 && out < max; i += 2) {
+    for (int i = 0; i < (int)s->count * 2 && out < max; i++) {
         float f = s->interleaved[i] * gain;
         if (f > 1.0f) f = 1.0f; else if (f < -1.0f) f = -1.0f;
-        buf[out++] = (short)(f * 32767.f) ^ 0x8000;
-        buf[out++] = (short)(f * 32767.f) ^ 0x8000;
+        buf[out++] = (short)(f * 32767.f);
     }
     ring_push(buf, out);
 }
@@ -203,6 +202,8 @@ static void *th(void *arg)
     g_height     = plm_get_height(pl);
     g_duration   = plm_get_duration(pl);
     g_audio_rate = plm_get_samplerate(pl);
+    if (g_audio_rate > 0)
+        plm_set_audio_lead_time(pl, (double)(RING_SIZE / 2) / (double)(g_audio_rate * 2));
 
     pthread_mutex_lock(&g_mutex);
     free(g_frame);
@@ -254,6 +255,7 @@ void video_play(const char *path)
     audio_stop();
 
     char *copy = strdup(path);
+    if (!copy) return;
     g_playing      = 1;
     g_paused       = 0;
     g_stop         = 0;
@@ -267,16 +269,37 @@ void video_play(const char *path)
 
 void video_stop(void)
 {
-    if (!g_alive) return;
+    if (!g_alive) {
+        if (ui_stopButt2)
+            lv_imgbtn_set_src(ui_stopButt2, LV_IMGBTN_STATE_RELEASED, NULL,
+                              &ui_img_start_png, NULL);
+        return;
+    }
     g_stop    = 1;
     g_paused  = 0;
     g_playing = 0;
     pthread_join(g_thread, NULL);
     g_alive = 0;
+    if (ui_stopButt2)
+        lv_imgbtn_set_src(ui_stopButt2, LV_IMGBTN_STATE_RELEASED, NULL,
+                          &ui_img_start_png, NULL);
 }
 
-void video_pause(void)                   { g_paused = 1; }
-void video_resume(void)                  { g_paused = 0; }
+void video_pause(void)
+{
+    g_paused = 1;
+    if (ui_stopButt2)
+        lv_imgbtn_set_src(ui_stopButt2, LV_IMGBTN_STATE_RELEASED, NULL,
+                          &ui_img_start_png, NULL);
+}
+
+void video_resume(void)
+{
+    g_paused = 0;
+    if (ui_stopButt2)
+        lv_imgbtn_set_src(ui_stopButt2, LV_IMGBTN_STATE_RELEASED, NULL,
+                          &ui_img_stop_png, NULL);
+}
 int  video_is_playing(void)              { return g_playing && !g_paused; }
 int  video_is_paused(void)               { return g_paused; }
 double video_get_time(void)
@@ -307,6 +330,17 @@ void video_set_volume(int pct)
 {
     if (pct < 0) pct = 0; else if (pct > 100) pct = 100;
     g_low_volume = pct;
+
+    int vol = (pct << 8) | pct;
+    for (int d = 0; d < 2; d++) {
+        char dev[16];
+        snprintf(dev, sizeof(dev), "/dev/mixer%s", d ? "1" : "");
+        int fd = open(dev, O_RDWR);
+        if (fd >= 0) {
+            ioctl(fd, MIXER_WRITE(SOUND_MIXER_VOLUME), &vol);
+            close(fd);
+        }
+    }
 }
 
 int video_get_frame(uint8_t **buf, int *w, int *h)
@@ -409,6 +443,8 @@ void video_module_init(void)
         g_video_canvas = lv_canvas_create(ui_videoContain);
         lv_obj_center(g_video_canvas);
     }
+    if (ui_Slider4)
+        video_set_volume(lv_slider_get_value(ui_Slider4));
     if (ui_videoText)
         lv_obj_set_style_text_font(ui_videoText, &cjk_font_20, LV_PART_MAIN);
 
@@ -427,104 +463,97 @@ void video_module_deinit(void)
 
 void video_render_frame(void) { /* 由定时器调用 */ }
 
+static void video_update_play_button(void)
+{
+    if (ui_stopButt2)
+        lv_imgbtn_set_src(ui_stopButt2, LV_IMGBTN_STATE_RELEASED, NULL,
+                          video_is_playing() ? &ui_img_stop_png : &ui_img_start_png, NULL);
+}
+
+static void video_update_title(void)
+{
+    if (!ui_videoText) return;
+
+    char tpath[256];
+    snprintf(tpath, sizeof(tpath), "/Mydata/video/%d.txt", g_vcur + 1);
+    FILE *tf = fopen(tpath, "r");
+    if (tf) {
+        char tline[256];
+        if (fgets(tline, sizeof(tline), tf)) {
+            int len = strlen(tline);
+            while (len > 0 && (tline[len-1]=='\n'||tline[len-1]=='\r')) tline[--len] = 0;
+            lv_textarea_set_text(ui_videoText, tline);
+        }
+        fclose(tf);
+    } else {
+        const char *name = strrchr(g_vpaths[g_vcur], '/');
+        lv_textarea_set_text(ui_videoText, name ? name + 1 : g_vpaths[g_vcur]);
+    }
+}
+
+void video_play_current(void)
+{
+    video_play(g_vpaths[g_vcur]);
+    video_update_play_button();
+    video_update_title();
+}
+
+void video_toggle_pause(void)
+{
+    if (video_is_playing()) {
+        video_pause();
+    } else if (video_is_paused()) {
+        video_resume();
+    } else {
+        video_play(g_vpaths[g_vcur]);
+    }
+    video_update_play_button();
+    video_update_title();
+}
+
+void video_next(void)
+{
+    video_stop();
+    g_vcur = (g_vcur + 1) % VPLS;
+    video_play_current();
+}
+
+void video_prev(void)
+{
+    video_stop();
+    g_vcur = (g_vcur - 1 + VPLS) % VPLS;
+    video_play_current();
+}
+
 // ── UI 事件处理 (由 ui_events.c 调用) ────────────────────
 
 void video_on_play_pause_btn(lv_event_t *e)
 {
     if (!e || lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-
-    if (video_is_playing()) {
-        video_pause();
-        lv_imgbtn_set_src(ui_stopButt2, LV_IMGBTN_STATE_RELEASED, NULL,
-                          &ui_img_start_png, NULL);
-    } else if (video_is_paused()) {
-        video_resume();
-        lv_imgbtn_set_src(ui_stopButt2, LV_IMGBTN_STATE_RELEASED, NULL,
-                          &ui_img_stop_png, NULL);
-    } else {
-        video_play(g_vpaths[g_vcur]);
-        lv_imgbtn_set_src(ui_stopButt2, LV_IMGBTN_STATE_RELEASED, NULL,
-                          &ui_img_stop_png, NULL);
-    }
-
-    // 读取视频标题（从 .txt 文件首行）
-    char tpath[256];
-    snprintf(tpath, sizeof(tpath), "/Mydata/video/%d.txt", g_vcur + 1);
-    FILE *tf = fopen(tpath, "r");
-    if (tf) {
-        char tline[256];
-        if (fgets(tline, sizeof(tline), tf)) {
-            int len = strlen(tline);
-            while (len > 0 && (tline[len-1]=='\n'||tline[len-1]=='\r')) tline[--len] = 0;
-            lv_textarea_set_text(ui_videoText, tline);
-        }
-        fclose(tf);
-    } else {
-        const char *name = strrchr(g_vpaths[g_vcur], '/');
-        lv_textarea_set_text(ui_videoText, name ? name + 1 : g_vpaths[g_vcur]);
-    }
+    video_toggle_pause();
 }
 
 void video_on_next_btn(lv_event_t *e)
 {
     if (!e || lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    video_stop();
-    g_vcur = (g_vcur + 1) % VPLS;
-    video_play(g_vpaths[g_vcur]);
-    lv_imgbtn_set_src(ui_stopButt2, LV_IMGBTN_STATE_RELEASED, NULL,
-                      &ui_img_stop_png, NULL);
-
-    char tpath[256];
-    snprintf(tpath, sizeof(tpath), "/Mydata/video/%d.txt", g_vcur + 1);
-    FILE *tf = fopen(tpath, "r");
-    if (tf) {
-        char tline[256];
-        if (fgets(tline, sizeof(tline), tf)) {
-            int len = strlen(tline);
-            while (len > 0 && (tline[len-1]=='\n'||tline[len-1]=='\r')) tline[--len] = 0;
-            lv_textarea_set_text(ui_videoText, tline);
-        }
-        fclose(tf);
-    } else {
-        const char *name = strrchr(g_vpaths[g_vcur], '/');
-        lv_textarea_set_text(ui_videoText, name ? name + 1 : g_vpaths[g_vcur]);
-    }
+    video_next();
 }
 
 void video_on_prev_btn(lv_event_t *e)
 {
     if (!e || lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    video_stop();
-    g_vcur = (g_vcur - 1 + VPLS) % VPLS;
-    video_play(g_vpaths[g_vcur]);
-    lv_imgbtn_set_src(ui_stopButt2, LV_IMGBTN_STATE_RELEASED, NULL,
-                      &ui_img_stop_png, NULL);
-
-    char tpath[256];
-    snprintf(tpath, sizeof(tpath), "/Mydata/video/%d.txt", g_vcur + 1);
-    FILE *tf = fopen(tpath, "r");
-    if (tf) {
-        char tline[256];
-        if (fgets(tline, sizeof(tline), tf)) {
-            int len = strlen(tline);
-            while (len > 0 && (tline[len-1]=='\n'||tline[len-1]=='\r')) tline[--len] = 0;
-            lv_textarea_set_text(ui_videoText, tline);
-        }
-        fclose(tf);
-    } else {
-        const char *name = strrchr(g_vpaths[g_vcur], '/');
-        lv_textarea_set_text(ui_videoText, name ? name + 1 : g_vpaths[g_vcur]);
-    }
+    video_prev();
 }
 
 void video_on_volume_slider(lv_event_t *e)
 {
     if (!e || lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
-    int v = lv_slider_get_value(ui_Slider4);
+    lv_obj_t *slider = lv_event_get_target(e);
+    int v = lv_slider_get_value(slider);
     video_set_volume(v);
     char b[16];
     snprintf(b, sizeof(b), "%d%%", v);
-    lv_label_set_text(ui_soundLabel2, b);
+    if (ui_soundLabel2) lv_label_set_text(ui_soundLabel2, b);
 }
 
 void video_on_time_slider(lv_event_t *e)

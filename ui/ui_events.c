@@ -11,6 +11,8 @@
 #include "asr.h"
 #include "tts.h"
 
+#include <stdio.h>
+
 void send_cmd_fun(lv_event_t * e)
 {
 	//Your code here
@@ -23,8 +25,11 @@ void send_cmd_fun(lv_event_t * e)
 	{
 		return;
 	}
+    char send_text[512];
+    strncpy(send_text, text, sizeof(send_text) - 1);
+    send_text[sizeof(send_text) - 1] = '\0';
     lv_textarea_add_text(ui_ansText, "You: "); 
-	lv_textarea_add_text(ui_ansText, text);
+	lv_textarea_add_text(ui_ansText, send_text);
     lv_textarea_add_text(ui_ansText, "\n");
     lv_textarea_set_text(ui_speakText, "");
     lv_textarea_set_placeholder_text(ui_speakText, "Thinking...");
@@ -38,10 +43,11 @@ void send_cmd_fun(lv_event_t * e)
 		lv_timer_del(g_control_timer);  
 		g_control_timer  = NULL; 
 	}
+    pipeline_reset_llm_state();
     g_has_intent = 0;
     g_step = 1; g_tick = 0;
-    strncpy(g_asr_text, text, sizeof(g_asr_text) - 1);
-    deepseek_send_request_async(text, on_deepseek_result);
+    strncpy(g_asr_text, send_text, sizeof(g_asr_text) - 1);
+    g_asr_text[sizeof(g_asr_text) - 1] = '\0';
     g_pipeline_timer = lv_timer_create(process_pipeline, 200, NULL);
 }
 
@@ -195,6 +201,130 @@ void toggle_btn_wash(lv_event_t * e)
 
 // 切换窗帘对应锁状态
 static bool is_cur_on = false;
+static int clamp_int(int value, int min_value, int max_value)
+{
+    if (value < min_value) return min_value;
+    if (value > max_value) return max_value;
+    return value;
+}
+
+static void set_light_power(lv_obj_t *btn, lv_obj_t *slider, bool *state, int on)
+{
+    if (btn)
+        lv_imgbtn_set_src(btn, LV_IMGBTN_STATE_RELEASED, NULL,
+                          on ? &ui_img_openlig_png : &ui_img_closelig_png, NULL);
+    if (slider) {
+        if (on)
+            lv_obj_add_flag(slider, LV_OBJ_FLAG_CLICKABLE);
+        else
+            lv_obj_clear_flag(slider, LV_OBJ_FLAG_CLICKABLE);
+    }
+    if (state) *state = on ? true : false;
+}
+
+static void set_light_value(lv_obj_t *slider, lv_obj_t *label, int value)
+{
+    char buf[16];
+    value = clamp_int(value, 0, 100);
+    if (slider)
+        lv_slider_set_value(slider, value, LV_ANIM_ON);
+    if (label) {
+        snprintf(buf, sizeof(buf), "%d%%", value);
+        lv_label_set_text(label, buf);
+    }
+}
+
+void home_set_device_power(int device, int on)
+{
+    switch (device) {
+    case HOME_DEVICE_THERMOMETER:
+        if (ui_therImgButt)
+            lv_imgbtn_set_src(ui_therImgButt, LV_IMGBTN_STATE_RELEASED, NULL,
+                              on ? &ui_img_opennest_png : &ui_img_closenest_png, NULL);
+        is_nest_on = on ? true : false;
+        break;
+    case HOME_DEVICE_AC:
+        if (ui_iceButt)
+            lv_imgbtn_set_src(ui_iceButt, LV_IMGBTN_STATE_RELEASED, NULL,
+                              on ? &ui_img_openice_png : &ui_img_closeice_png, NULL);
+        if (ui_iceArc) {
+            if (on)
+                lv_obj_add_flag(ui_iceArc, LV_OBJ_FLAG_CLICKABLE);
+            else
+                lv_obj_clear_flag(ui_iceArc, LV_OBJ_FLAG_CLICKABLE);
+        }
+        is_arc_on = on ? true : false;
+        break;
+    case HOME_DEVICE_AIR_PURIFIER:
+        if (ui_airButt)
+            lv_imgbtn_set_src(ui_airButt, LV_IMGBTN_STATE_RELEASED, NULL,
+                              on ? &ui_img_openclean_png : &ui_img_closeclean_png, NULL);
+        is_air_on = on ? true : false;
+        break;
+    case HOME_DEVICE_MASTER_LIGHT:
+        set_light_power(ui_ImgButton7, ui_Slider7, &is_slider_on1, on);
+        break;
+    case HOME_DEVICE_LIVING_LIGHT:
+        set_light_power(ui_ImgButton2, ui_Slider2, &is_slider_on2, on);
+        break;
+    case HOME_DEVICE_KITCHEN_LIGHT:
+        set_light_power(ui_ImgButton5, ui_Slider5, &is_slider_on3, on);
+        break;
+    case HOME_DEVICE_REFRIGERATOR:
+        if (ui_ImgButton10)
+            lv_imgbtn_set_src(ui_ImgButton10, LV_IMGBTN_STATE_RELEASED, NULL,
+                              on ? &ui_img_openreg_png : &ui_img_closereg_png, NULL);
+        is_reg_on = on ? true : false;
+        break;
+    case HOME_DEVICE_WASHER:
+        if (ui_ImgButton6)
+            lv_imgbtn_set_src(ui_ImgButton6, LV_IMGBTN_STATE_RELEASED, NULL,
+                              on ? &ui_img_openwash_png : &ui_img_closewash_png, NULL);
+        is_wash_on = on ? true : false;
+        break;
+    case HOME_DEVICE_CURTAIN:
+        if (ui_ImgButton8)
+            lv_imgbtn_set_src(ui_ImgButton8, LV_IMGBTN_STATE_RELEASED, NULL,
+                              on ? &ui_img_opencur_png : &ui_img_closecur_png, NULL);
+        is_cur_on = on ? true : false;
+        break;
+    default:
+        break;
+    }
+}
+
+void home_set_ac_temperature(int temperature)
+{
+    char buf[16];
+    temperature = clamp_int(temperature, 16, 35);
+    home_set_device_power(HOME_DEVICE_AC, 1);
+    if (ui_iceArc)
+        lv_arc_set_value(ui_iceArc, temperature);
+    if (ui_iceLabel) {
+        snprintf(buf, sizeof(buf), "%d\302\260C", temperature);
+        lv_label_set_text(ui_iceLabel, buf);
+    }
+}
+
+void home_set_light_brightness(int device, int brightness)
+{
+    brightness = clamp_int(brightness, 0, 100);
+    home_set_device_power(device, brightness > 0);
+    switch (device) {
+    case HOME_DEVICE_MASTER_LIGHT:
+        set_light_value(ui_Slider7, ui_sliderLabel7, brightness);
+        break;
+    case HOME_DEVICE_LIVING_LIGHT:
+        set_light_value(ui_Slider2, ui_sliderLabel2, brightness);
+        break;
+    case HOME_DEVICE_KITCHEN_LIGHT:
+        set_light_value(ui_Slider5, ui_sliderLabel5, brightness);
+        break;
+    default:
+        break;
+    }
+}
+
 void toggle_btn_cur(lv_event_t * e)
 {
 	// Your code here
@@ -293,8 +423,9 @@ void speak_fun(lv_event_t * e)
 		{ 
 			lv_timer_del(g_control_timer);  
 			g_control_timer  = NULL; 
-		}
+        }
         g_has_intent = 0;
+        pipeline_reset_llm_state();
         g_asr_text[0] = '\0'; g_ai_reply[0] = '\0';
         g_step = 0; g_tick = 0;
         asr_start_listening(on_asr_result);

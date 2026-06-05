@@ -25,6 +25,13 @@ static int g_slider_dragging = 0;
 static int g_last_idx   = -1;
 static lv_timer_t *g_timer = NULL;
 
+static void update_play_button(void)
+{
+    if (ui_stopButt)
+        lv_imgbtn_set_src(ui_stopButt, LV_IMGBTN_STATE_RELEASED, NULL,
+                          g_state == MUSIC_STATE_PLAYING ? &ui_img_stop_png : &ui_img_start_png, NULL);
+}
+
 // ── Lyrics buffer ─────────────────────────────────────────
 #define LYR_N 7
 static char g_lyric_buf[4096];
@@ -123,6 +130,7 @@ static void load_and_play(int idx)
 
     // Start audio playback
     g_state = MUSIC_STATE_PLAYING;
+    update_play_button();
     audio_play(g_paths[idx]);
 }
 
@@ -200,10 +208,7 @@ void music_init(void)
     if (ui_songerText)
         lv_obj_set_style_text_font(ui_songerText, &cjk_font_20, LV_PART_MAIN);
 
-    // Set initial button image to start (stopped state)
-    if (ui_stopButt)
-        lv_imgbtn_set_src(ui_stopButt, LV_IMGBTN_STATE_RELEASED, NULL,
-                          &ui_img_start_png, NULL);
+    update_play_button();
 
     if (!g_timer)
         g_timer = lv_timer_create(timer_cb, 300, NULL);
@@ -244,6 +249,7 @@ void music_stop(void)
     lv_slider_set_value(ui_timeSlider3, 0, LV_ANIM_OFF);
     lv_label_set_text(ui_nowtimeLabel3, "0:00");
     lv_label_set_text(ui_sumtimeLabel3, "0:00");
+    update_play_button();
 
 }
 
@@ -252,6 +258,7 @@ void music_pause(void)
     if (g_state != MUSIC_STATE_PLAYING) return;
     audio_pause();
     g_state = MUSIC_STATE_PAUSED;
+    update_play_button();
 }
 
 void music_resume(void)
@@ -259,6 +266,7 @@ void music_resume(void)
     if (g_state != MUSIC_STATE_PAUSED) return;
     audio_resume();
     g_state = MUSIC_STATE_PLAYING;
+    update_play_button();
 }
 
 void music_toggle_pause(void)

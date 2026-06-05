@@ -17,5 +17,6 @@ extern char g_ai_reply[2048];
 void on_asr_result(const char *text);
 void on_deepseek_result(const Intent *intent, const char *reply);
 void process_pipeline(lv_timer_t *t);
+void pipeline_reset_llm_state(void);
 
 #endif

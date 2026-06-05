@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #include <unistd.h>
 #include <pthread.h>
 #include <sys/socket.h>
@@ -16,6 +17,18 @@
 #define BUF_SIZE       40960
 #define BODY_MAX       6000
 #define REQ_MAX        2048
+static const char *llm_host(void)
+{
+    const char *host = getenv("LLM_HOST");
+    return (host && *host) ? host : DEEPSEEK_HOST;
+}
+
+static int llm_port(void)
+{
+    const char *port = getenv("LLM_PORT");
+    int p = port ? atoi(port) : 0;
+    return p > 0 ? p : DEEPSEEK_PORT;
+}
 #define HISTORY_MAX    8  // 保留最近 8 条消息（4轮对话）
 
 // JSON 转义
@@ -102,6 +115,8 @@ int deepseek_parse_intent(const char *user_text, Intent *intent,
                           char *reply_out, int reply_max) {
     const char *api_key = getenv("DEEPSEEK_API_KEY");  // 可选，本地LLM不需要
     const char *model   = getenv("LLM_MODEL");
+    const char *host_name = llm_host();
+    int port_num = llm_port();
     if (!model) model = "qwen2.5:7b";
 
     char escaped[REQ_MAX], body[BODY_MAX], header[1024];
@@ -157,7 +172,7 @@ int deepseek_parse_intent(const char *user_text, Intent *intent,
             "Content-Type: application/json\r\n"
             "Content-Length: %zu\r\n"
             "Connection: close\r\n\r\n",
-            DEEPSEEK_HOST, api_key, strlen(body));
+            host_name, api_key, strlen(body));
     } else {
         snprintf(header, sizeof(header),
             "POST /v1/chat/completions HTTP/1.1\r\n"
@@ -165,17 +180,17 @@ int deepseek_parse_intent(const char *user_text, Intent *intent,
             "Content-Type: application/json\r\n"
             "Content-Length: %zu\r\n"
             "Connection: close\r\n\r\n",
-            DEEPSEEK_HOST, strlen(body));
+            host_name, strlen(body));
     }
     
-    fprintf(stderr, "[LLM] connecting to %s:%d ...\n", DEEPSEEK_HOST, DEEPSEEK_PORT);
+    fprintf(stderr, "[LLM] connecting to %s:%d ...\n", host_name, port_num);
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     struct sockaddr_in addr;
-    struct hostent *host = gethostbyname(DEEPSEEK_HOST);
-    if (!host) { fprintf(stderr, "[LLM] gethostbyname failed\n"); return -1; }
+    struct hostent *host = gethostbyname(host_name);
+    if (!host) { fprintf(stderr, "[LLM] gethostbyname(%s) failed\n", host_name); return -1; }
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(DEEPSEEK_PORT);
+    addr.sin_port = htons(port_num);
     memcpy(&addr.sin_addr, host->h_addr, host->h_length);
     
     // 超时 30 秒
@@ -184,7 +199,7 @@ int deepseek_parse_intent(const char *user_text, Intent *intent,
     setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
     
     if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        fprintf(stderr, "[LLM] connect failed\n"); close(sock); return -1;
+        fprintf(stderr, "[LLM] connect failed: %s\n", strerror(errno)); close(sock); return -1;
     }
     fprintf(stderr, "[LLM] connected, sending...\n");
 
@@ -242,6 +257,8 @@ static void *deepseek_thread(void *arg) {
         task->callback(&intent, reply);
     } else if (reply[0] != '\0') {
         task->callback(NULL, reply);
+    } else {
+        task->callback(NULL, NULL);
     }
 
     // 保存对话历史（环形缓冲）
@@ -257,10 +274,19 @@ static void *deepseek_thread(void *arg) {
 void deepseek_send_request_async(const char *user_text,
                                   void (*on_result)(const Intent *, const char *)) {
     deepseek_task_t *task = malloc(sizeof(deepseek_task_t));
+    if (!task) {
+        if (on_result) on_result(NULL, NULL);
+        return;
+    }
     strncpy(task->text, user_text, sizeof(task->text) - 1);
+    task->text[sizeof(task->text) - 1] = '\0';
     task->callback = on_result;
     
     pthread_t tid;
-    pthread_create(&tid, NULL, deepseek_thread, task);
+    if (pthread_create(&tid, NULL, deepseek_thread, task) != 0) {
+        if (task->callback) task->callback(NULL, NULL);
+        free(task);
+        return;
+    }
     pthread_detach(tid);
 }

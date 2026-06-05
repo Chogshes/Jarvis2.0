@@ -253,12 +253,14 @@ void ui_mainScreen_screen_init(void)
     lv_obj_set_x(ui_speakText, 0);
     lv_obj_set_y(ui_speakText, 56);
     lv_obj_set_align(ui_speakText, LV_ALIGN_CENTER);
-    lv_textarea_set_placeholder_text(ui_speakText, "                   Type or speak a command...");
+    lv_textarea_set_placeholder_text(ui_speakText, "Type or speak a command...");
     lv_textarea_set_one_line(ui_speakText, true);
     lv_obj_set_style_text_color(ui_speakText, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_opa(ui_speakText, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_color(ui_speakText, lv_color_hex(0x090000), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(ui_speakText, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_align(ui_speakText, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_align(ui_speakText, LV_TEXT_ALIGN_CENTER, LV_PART_TEXTAREA_PLACEHOLDER | LV_STATE_DEFAULT);
 
 
 

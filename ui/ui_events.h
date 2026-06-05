@@ -21,6 +21,20 @@ void toggle_slider_lock3(lv_event_t * e);
 void toggle_btn_reg(lv_event_t * e);
 void toggle_btn_wash(lv_event_t * e);
 void toggle_btn_cur(lv_event_t * e);
+enum {
+    HOME_DEVICE_THERMOMETER = 0,
+    HOME_DEVICE_AC,
+    HOME_DEVICE_AIR_PURIFIER,
+    HOME_DEVICE_MASTER_LIGHT,
+    HOME_DEVICE_LIVING_LIGHT,
+    HOME_DEVICE_KITCHEN_LIGHT,
+    HOME_DEVICE_REFRIGERATOR,
+    HOME_DEVICE_WASHER,
+    HOME_DEVICE_CURTAIN
+};
+void home_set_device_power(int device, int on);
+void home_set_ac_temperature(int temperature);
+void home_set_light_brightness(int device, int brightness);
 void start_stop_fun(lv_event_t * e);
 void next_music_fun(lv_event_t * e);
 void last_music_fun(lv_event_t * e);

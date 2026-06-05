@@ -25,6 +25,10 @@ int    video_get_frame(uint8_t **buf, int *w, int *h);
 void video_module_init(void);
 void video_module_deinit(void);
 void video_render_frame(void);
+void video_play_current(void);
+void video_toggle_pause(void);
+void video_next(void);
+void video_prev(void);
 
 // UI event handlers — called from ui_events.c
 void video_on_play_pause_btn(lv_event_t *e);

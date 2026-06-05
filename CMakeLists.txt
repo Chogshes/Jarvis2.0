@@ -5,6 +5,8 @@ set(CMAKE_CXX_COMPILER "/mnt/d/ArmPath/arm-linux-gcc/usr/local/arm/5.4.0/usr/bin
 
 project(jarvis)
 
+set(BEMFA_UID_DEFAULT "bf0bae36c31f649e87ae77d1216a6c95" CACHE STRING "Bemfa TCP UID/private key" FORCE)
+
 include_directories(.)
 include_directories(./include)
 include_directories(./lvgl)
@@ -25,7 +27,13 @@ add_executable(${PROJECT_NAME}
     src/asr.c # ASR 识别
     src/tts.c # TTS 朗读
     src/pipeline.c # 管线处理
+    src/device.c   # 智能设备模拟进程 + 链表管理
+    src/bemfa.c    # 巴法云 TCP 客户端
 )
+
+if(BEMFA_UID_DEFAULT)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE BEMFA_UID_DEFAULT="${BEMFA_UID_DEFAULT}")
+endif()
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
     lvgl lvgl::examples lvgl::demos lvgl::drivers ui
